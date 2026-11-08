@@ -114,6 +114,8 @@ typedef struct EnBsb {
     /* 0x1134 */ Vec3f subCamAt;
     /* 0x1140 */ Vec3f subCamEyeNext;
     /* 0x114C */ Vec3f subCamAtNext;
-} EnBsb; // size = 0x1158
+    // Miniboss Overhaul
+    u8 eoSwingWave;
+} EnBsb; // size = 0x1158 (vanilla size)
 
 #endif // Z_EN_BSB_H

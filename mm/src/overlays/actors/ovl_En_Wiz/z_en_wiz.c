@@ -5,6 +5,7 @@
  */
 
 #include "z_en_wiz.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "overlays/actors/ovl_En_Wiz_Brock/z_en_wiz_brock.h"
@@ -335,11 +336,11 @@ void EnWiz_Init(Actor* thisx, PlayState* play) {
 
     if ((this->type == EN_WIZ_TYPE_FIRE) || (this->type == EN_WIZ_TYPE_FIRE_NO_BGM)) {
         this->actor.colChkInfo.damageTable = &sFireWizrobeDamageTable;
-        this->actor.colChkInfo.health = 8;
+        this->actor.colChkInfo.health = EO_HP2(8); // Miniboss Overhaul: 8 -> 16 per phase
         this->actor.flags &= ~ACTOR_FLAG_FREEZE_EXCEPTION;
     } else {
         this->actor.colChkInfo.damageTable = &sIceWizrobeDamageTable;
-        this->actor.colChkInfo.health = 6;
+        this->actor.colChkInfo.health = EO_HP2(6); // Miniboss Overhaul: 6 -> 12 per phase
     }
 
     if ((this->switchFlag > SWITCH_FLAG_NONE) && Flags_GetSwitch(play, this->switchFlag)) {
@@ -983,6 +984,19 @@ void EnWiz_Attack(EnWiz* this, PlayState* play) {
             this->hasActiveProjectile = true;
             Actor_PlaySfx(&this->actor, NA_SE_EN_WIZ_ATTACK);
             Actor_PlaySfx(&this->actor, NA_SE_PL_MAGIC_FIRE);
+
+            // Miniboss Overhaul: the spell splits, with extra bolts to either side (four in the second phase)
+            if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+                BoOrbKind kind = (type == EN_WIZ_TYPE_ICE) ? BO_ORB_ICE : BO_ORB_FIRE;
+                s32 second = (this->fightState != EN_WIZ_FIGHT_STATE_FIRST_PHASE);
+
+                EoShot_OrbAimed(play, &this->actor, kind, &pos, 11.0f, 0x1000);
+                EoShot_OrbAimed(play, &this->actor, kind, &pos, 11.0f, -0x1000);
+                if (second) {
+                    EoShot_OrbAimed(play, &this->actor, kind, &pos, 11.0f, 0x2200);
+                    EoShot_OrbAimed(play, &this->actor, kind, &pos, 11.0f, -0x2200);
+                }
+            }
         }
 
         if ((curFrame >= 8.0f) && !this->shouldStartTimer) {
@@ -1149,9 +1163,9 @@ void EnWiz_Damaged(EnWiz* this, PlayState* play) {
             if (this->fightState == EN_WIZ_FIGHT_STATE_FIRST_PHASE) {
                 this->fightState = EN_WIZ_FIGHT_STATE_SECOND_PHASE_CUTSCENE;
                 if ((this->type == EN_WIZ_TYPE_FIRE) || (this->type == EN_WIZ_TYPE_FIRE_NO_BGM)) {
-                    this->actor.colChkInfo.health = 8;
+                    this->actor.colChkInfo.health = EO_HP2(8);
                 } else {
-                    this->actor.colChkInfo.health = 6;
+                    this->actor.colChkInfo.health = EO_HP2(6);
                 }
 
                 EnWiz_SetupDisappear(this);

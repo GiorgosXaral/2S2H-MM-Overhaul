@@ -5,6 +5,7 @@
  */
 
 #include "z_en_wf.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Bom_Chu/z_en_bom_chu.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "overlays/actors/ovl_Obj_Ice_Poly/z_obj_ice_poly.h"
@@ -810,6 +811,23 @@ void func_809919F4(EnWf* this, PlayState* play) {
 }
 
 void func_80991C04(EnWf* this) {
+    // Enemy Overhaul: Wolfos read Link's guard. Against a raised shield they usually feint and spring back to look for
+    // an opening; now and then they feint anyway.
+    if (EO_ENEMIES_ON() && (gPlayState != NULL)) {
+        Player* player = GET_PLAYER(gPlayState);
+        f32 roll = Rand_ZeroOne();
+
+        if (((player->stateFlags1 & PLAYER_STATE1_400000) && (roll < 0.6f)) || (roll < 0.12f)) {
+            Actor_PlaySfx(&this->actor, NA_SE_EN_WOLFOS_CRY);
+            func_8099223C(this);
+            return;
+        }
+
+        // A White Wolfos' claws sometimes carry a freezing chill
+        this->collider1.elements[0].base.atDmgInfo.effect = this->collider1.elements[1].base.atDmgInfo.effect =
+            ((this->actor.params != 0) && (Rand_ZeroOne() < 0.3f)) ? 2 : 0;
+    }
+
     this->collider2.base.acFlags |= AC_ON;
     Animation_PlayOnce(&this->skelAnime, &gWolfosSlashAnim);
     this->collider1.base.atFlags &= ~AT_BOUNCED;
@@ -1465,6 +1483,32 @@ void func_8099386C(EnWf* this, PlayState* play) {
                 }
 
                 Actor_SetColorFilter(&this->actor, COLORFILTER_COLORFLAG_RED, 255, COLORFILTER_BUFFLAG_OPA, 8);
+
+                // Enemy Overhaul: hurt badly for the first time, a Wolfos howls and another answers from behind Link
+                if (EO_ENEMIES_ON() && !this->eoHowled && (this->actor.colChkInfo.health != 0) &&
+                    (this->actor.colChkInfo.health <= 3)) {
+                    Actor* other;
+                    s32 packNearby = false;
+                    Vec3f pos;
+
+                    this->eoHowled = true;
+                    for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; other != NULL; other = other->next) {
+                        if ((other != &this->actor) && (other->id == ACTOR_EN_WF) && (other->update != NULL) &&
+                            (other->xzDistToPlayer < 1200.0f)) {
+                            packNearby = true;
+                        }
+                    }
+
+                    if (!packNearby && Eo_PosBehindPlayer(play, 200.0f, &pos)) {
+                        EnWf* answer = (EnWf*)Eo_SpawnAnyObject(play, ACTOR_EN_WF, pos.x, pos.y, pos.z, 0,
+                                                                this->actor.shape.rot.y, 0, this->actor.params);
+
+                        if (answer != NULL) {
+                            answer->eoHowled = true;
+                        }
+                        Actor_PlaySfx(&this->actor, NA_SE_EN_WOLFOS_CRY);
+                    }
+                }
 
                 if (this->actor.colChkInfo.health == 0) {
                     func_80992D6C(this);

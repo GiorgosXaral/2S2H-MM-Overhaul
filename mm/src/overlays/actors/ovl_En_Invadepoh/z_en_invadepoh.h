@@ -173,7 +173,16 @@ typedef struct EnInvadepoh {
     /* 0x3AC */ s8 ufoTargetPosIndex;
     /* 0x3AD */ UNK_TYPE1 unk_3AD[0xF];
     /* 0x3BC */ s8 dogTargetPoint;
-} EnInvadepoh; // size = 0x3C0
+    // 2S2H [Enhancement] Miniboss & Enemy Overhaul ("Them")
+    s16 eoWeavePhase;
+    s16 eoShotTimer;
+    s16 eoBlinkTimer;
+    s16 eoHurtTimer;
+    s16 eoUfoTimer;
+    f32 eoBlinkAt;
+    u8 eoLeader;
+    u8 eoLeaderHits;
+} EnInvadepoh;
 
 typedef enum {
     /* 0x0 */ ENINVADEPOH_HANDLER,         // Invasion event handler   

@@ -48,6 +48,9 @@ typedef struct EnBigokuta {
     /* 0x2C4 */ Vec3f bodyPartsPos[BIGOKUTA_BODYPART_MAX];
     /* 0x360 */ ColliderCylinder shellCollider;
     /* 0x3AC */ ColliderCylinder bodyCollider;
+    // Enemy Overhaul
+    s16 eoShotTimer;
+    u8 eoCalledOctoroks;
 } EnBigokuta; // size = 0x3F8
 
 #endif // Z_EN_BIGOKUTA_H

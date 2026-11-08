@@ -27,6 +27,10 @@ static BoOrbKindInfo sBoOrbKindInfo[BO_ORB_KIND_MAX] = {
     /* BO_ORB_WATER    */ { 4, 0x10, 22, 44, 120, 4.0f, 0.0f, { 210, 245, 255 }, { 40, 120, 255 } },
     /* BO_ORB_ELECTRIC */ { 3, 0x10, 22, 44, 150, 3.5f, 0.0f, { 255, 255, 200 }, { 120, 160, 255 } },
     /* BO_ORB_EMBER    */ { 1, 0x08, 18, 36, 26, 2.0f, 0.12f, { 255, 200, 90 }, { 255, 40, 0 } },
+    /* BO_ORB_ICE      */ { 2, 0x10, 22, 44, 120, 3.5f, 0.0f, { 230, 250, 255 }, { 80, 170, 255 } },
+    /* BO_ORB_CURSE    */ { 0, 0x10, 22, 44, 120, 3.5f, 0.0f, { 235, 170, 255 }, { 130, 0, 210 } },
+    /* BO_ORB_LIGHT    */ { 3, 0x10, 24, 48, 150, 4.0f, 0.0f, { 255, 255, 235 }, { 255, 230, 110 } },
+    /* BO_ORB_MUD      */ { 4, 0x08, 20, 40, 90, 3.0f, 0.0f, { 205, 170, 120 }, { 90, 60, 20 } },
 };
 
 // Enemy attack that can be blocked with a shield. It never takes damage itself.
@@ -124,6 +128,19 @@ void BoOrb_Update(Actor* actor, BoOrb* orb, PlayState* play) {
         }
     }
 
+    if (((orb->kind == BO_ORB_ICE) || (orb->kind == BO_ORB_CURSE) || (orb->kind == BO_ORB_LIGHT)) &&
+        ((orb->life % 3) == 0)) {
+        // A glittering trail in the orb's colors
+        Color_RGBA8 sparklePrim = { 255, 255, 255, 255 };
+        Color_RGBA8 sparkleEnv = { info->env.r, info->env.g, info->env.b, 0 };
+        Vec3f sparklePos;
+
+        sparklePos.x = actor->world.pos.x + Rand_CenteredFloat(24.0f * orb->sizeScale);
+        sparklePos.y = actor->world.pos.y + Rand_CenteredFloat(24.0f * orb->sizeScale);
+        sparklePos.z = actor->world.pos.z + Rand_CenteredFloat(24.0f * orb->sizeScale);
+        EffectSsKirakira_SpawnSmall(play, &sparklePos, &gZeroVec3f, &gZeroVec3f, &sparklePrim, &sparkleEnv);
+    }
+
     if (orb->kind == BO_ORB_FIRE) {
         Actor_PlaySfx(actor, NA_SE_EV_BURN_OUT - SFX_FLAG);
     } else if (orb->kind == BO_ORB_ELECTRIC) {
@@ -160,6 +177,18 @@ void BoOrb_Update(Actor* actor, BoOrb* orb, PlayState* play) {
         if (orb->kind == BO_ORB_WATER) {
             EffectSsGSplash_Spawn(play, &actor->world.pos, NULL, NULL, 0, (s16)(700.0f * orb->sizeScale));
             Actor_PlaySfx(actor, NA_SE_EV_BOMB_DROP_WATER);
+        } else if (orb->kind == BO_ORB_ICE) {
+            EffectSsIcePiece_SpawnBurst(play, &actor->world.pos, 0.6f * orb->sizeScale);
+            Actor_PlaySfx(actor, NA_SE_EV_ICE_BROKEN);
+        } else if ((orb->kind == BO_ORB_CURSE) || (orb->kind == BO_ORB_LIGHT)) {
+            Color_RGBA8 puffPrim = { info->prim.r, info->prim.g, info->prim.b, 255 };
+            Color_RGBA8 puffEnv = { info->env.r, info->env.g, info->env.b, 255 };
+
+            EffectSsDeadDb_Spawn(play, &actor->world.pos, &gZeroVec3f, &gZeroVec3f, &puffPrim, &puffEnv,
+                                 (s16)(60.0f * orb->sizeScale), 6, 9);
+        } else if (orb->kind == BO_ORB_MUD) {
+            func_800B1210(play, &actor->world.pos, &gZeroVec3f, &gZeroVec3f, (s16)(120.0f * orb->sizeScale), 20);
+            Actor_PlaySfx(actor, NA_SE_EN_OCTAROCK_ROCK);
         } else if (orb->kind != BO_ORB_EMBER) {
             Vec3f flameAccel = { 0.0f, 0.5f, 0.0f };
 

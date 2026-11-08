@@ -5,6 +5,7 @@
  */
 
 #include "z_en_dinofos.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 
 #define FLAGS                                                                                 \
@@ -380,6 +381,11 @@ void EnDinofos_ChooseAction(EnDinofos* this, PlayState* play) {
         } else {
             EnDinofos_SetupCircleAroundPlayer(this, play);
         }
+    } else if (EO_ENEMIES_ON() && (this->actor.xzDistToPlayer < 110.0f) && (Rand_ZeroOne() < 0.5f)) {
+        // Enemy Overhaul: get too close behind a Dinolfos and it whirls around with a slash
+        this->actor.shape.rot.y = this->actor.world.rot.y = this->actor.yawTowardsPlayer;
+        Actor_PlaySfx(&this->actor, NA_SE_EN_RIZA_ATTACK);
+        EnDinofos_SetupSlash(this);
     } else if (Rand_ZeroOne() < 0.6f) {
         EnDinofos_SetupTurnToPlayer(this);
     } else {
@@ -1080,6 +1086,27 @@ void EnDinofos_SetupBreatheFire(EnDinofos* this, PlayState* play) {
     s32 i;
     Sphere16* worldSphere;
 
+    // Enemy Overhaul: while one Dinolfos breathes fire, its partner leaps in from the side
+    if (EO_ENEMIES_ON() && Eo_CanAttack(play)) {
+        Actor* other;
+
+        for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; other != NULL; other = other->next) {
+            EnDinofos* partner = (EnDinofos*)other;
+
+            if ((other != &this->actor) && (other->id == ACTOR_EN_DINOFOS) && (other->update != NULL) &&
+                (other->colChkInfo.health > 0) && (other->xzDistToPlayer > 150.0f) &&
+                (other->xzDistToPlayer < 380.0f) && (other->bgCheckFlags & BGCHECKFLAG_GROUND) &&
+                ((partner->actionFunc == EnDinofos_Idle) || (partner->actionFunc == EnDinofos_Walk) ||
+                 (partner->actionFunc == EnDinofos_CircleAroundPlayer) ||
+                 (partner->actionFunc == EnDinofos_TurnToPlayer)) &&
+                (partner->drawDmgEffType != ACTOR_DRAW_DMGEFF_FROZEN_NO_SFX)) {
+                other->shape.rot.y = other->world.rot.y = other->yawTowardsPlayer;
+                EnDinofos_SetupChooseJump(partner, DINOFOS_JUMP_TYPE_FORWARD);
+                break;
+            }
+        }
+    }
+
     Animation_PlayLoop(&this->skelAnime, &gDinolfosFireLoopAnim);
     this->attackTimer = 20;
     this->actor.speed = 0.0f;
@@ -1161,6 +1188,25 @@ void EnDinofos_BreatheFire(EnDinofos* this, PlayState* play) {
 void EnDinofos_SetupEndBreatheFire(EnDinofos* this, PlayState* play) {
     Animation_PlayOnce(&this->skelAnime, &gDinolfosFireEndAnim);
     this->bodyAndFireCollider.base.atFlags &= ~AT_ON;
+
+    // Enemy Overhaul: the breath leaves the ground burning for a moment
+    if (EO_ENEMIES_ON() && Eo_CanAttack(play)) {
+        s32 i;
+
+        for (i = -1; i <= 1; i++) {
+            s16 yaw = this->actor.shape.rot.y + (i * 0x1800);
+            Vec3f patchPos;
+            f32 floorY;
+
+            patchPos.x = this->actor.world.pos.x + (Math_SinS(yaw) * 150.0f);
+            patchPos.y = this->actor.world.pos.y;
+            patchPos.z = this->actor.world.pos.z + (Math_CosS(yaw) * 150.0f);
+            if (Eo_FindFloor(play, &patchPos, 100.0f, &floorY)) {
+                patchPos.y = floorY;
+                EoShot_GroundWave(play, &this->actor, EO_LOOK_FIRE, &patchPos, yaw, 0.6f, 60, 0x08);
+            }
+        }
+    }
     if (play->sceneId == SCENE_MITURIN) {
         play->envCtx.lightSettingOverride = LIGHT_SETTING_OVERRIDE_NONE;
     }

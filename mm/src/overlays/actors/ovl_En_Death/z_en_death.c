@@ -5,6 +5,7 @@
  */
 
 #include "z_en_death.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64rumble.h"
 #include "overlays/actors/ovl_Arrow_Light/z_arrow_light.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -246,6 +247,7 @@ void EnDeath_Init(Actor* thisx, PlayState* play2) {
     this->coreCollider.dim.worldSphere.radius = this->coreCollider.dim.modelSphere.radius;
 
     CollisionCheck_SetInfo2(&this->actor.colChkInfo, &sDamageTable, &sColChkInfoInit);
+    this->actor.colChkInfo.health = EO_HP2(this->actor.colChkInfo.health); // Miniboss Overhaul: 20 -> 40
 
     Effect_Add(play, &this->effectIndex, EFFECT_BLURE2, 0, 0, &sBlureInit);
 
@@ -665,6 +667,18 @@ void EnDeath_SwingAttack(EnDeath* this, PlayState* play) {
     if (this->actionTimer > 0) {
         this->actionTimer++;
         if (this->actionTimer == 3) {
+            // Miniboss Overhaul: the scythe reaps a fan of cursed flames along the floor
+            if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+                Vec3f wavePos = this->actor.world.pos;
+                f32 floorY;
+
+                wavePos.x += Math_SinS(this->actor.shape.rot.y) * 60.0f;
+                wavePos.z += Math_CosS(this->actor.shape.rot.y) * 60.0f;
+                if (Eo_FindFloor(play, &wavePos, 400.0f, &floorY)) {
+                    wavePos.y = floorY;
+                    EoShot_GroundWaveFan(play, &this->actor, EO_LOOK_DARK, &wavePos, 3, 0x1800, 12.0f, 45, 0x10);
+                }
+            }
             EnDeath_SetupEndSwingAttack(this);
         }
     } else if (SkelAnime_Update(&this->skelAnime) && this->actor.xzDistToPlayer < 100.0f) {
@@ -766,6 +780,27 @@ void EnDeath_SpinAttack(EnDeath* this, PlayState* play) {
         this->actor.speed = 10.0f;
     }
 
+    // Miniboss Overhaul: the whirling scythe flings cursed flames out to both sides
+    if ((this->actionTimer > 10) && ((this->actionTimer % 8) == 0) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+        Vec3f flamePos = this->actor.world.pos;
+        s32 i;
+
+        flamePos.y += 40.0f;
+        for (i = 0; i < 2; i++) {
+            s16 yaw = this->actor.world.rot.y + ((i == 0) ? 0x4000 : -0x4000);
+            Vec3f vel;
+            EoShot* flame;
+
+            vel.x = Math_SinS(yaw) * 8.0f;
+            vel.y = 0.0f;
+            vel.z = Math_CosS(yaw) * 8.0f;
+            flame = EoShot_Orb(play, &this->actor, BO_ORB_CURSE, &flamePos, &vel);
+            if (flame != NULL) {
+                flame->orb.life = flame->orb.maxLife = 50;
+            }
+        }
+    }
+
     EnDeath_UpdateSpinAttackTris(this);
 
     Math_ScaledStepToS(&this->cloakUpperRotationModifier, (s32)(Math_SinS(this->actionTimer * 0x2000) * 0x800) + 0x3000,
@@ -795,7 +830,22 @@ void EnDeath_Damaged(EnDeath* this, PlayState* play) {
     EnDeath_Float(this);
     Math_StepToF(&this->actor.speed, 0.0f, 0.5f);
     if (SkelAnime_Update(&this->skelAnime)) {
+        Vec3f behind;
+
         this->coreCollider.base.acFlags |= AC_ON;
+
+        // Miniboss Overhaul: badly hurt, Gomess sometimes fades away and comes back behind Link
+        if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play) && (this->actor.colChkInfo.health > 0) &&
+            EO_AT_OR_BELOW(this->actor.colChkInfo.health, EO_HP2(20), 1, 3) && (Rand_ZeroOne() < 0.5f) &&
+            Eo_PosBehindPlayer(play, 170.0f, &behind)) {
+            Eo_Puff(play, &this->actor.world.pos, 2.0f);
+            this->actor.world.pos.x = behind.x;
+            this->actor.world.pos.z = behind.z;
+            this->actor.shape.rot.y = this->actor.world.rot.y = this->actor.yawTowardsPlayer =
+                Actor_WorldYawTowardPoint(&this->actor, &GET_PLAYER(play)->actor.world.pos);
+            Eo_Puff(play, &this->actor.world.pos, 2.0f);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_DEATH_VOICE);
+        }
         EnDeath_SetupSpinAttack(this);
     }
 }
@@ -1122,6 +1172,20 @@ void EnDeath_SetupBatSwarm(EnDeath* this) {
 void EnDeath_BatSwarm(EnDeath* this, PlayState* play) {
     Math_SmoothStepToS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 8, 0x1000, 0x100);
     SkelAnime_Update(&this->skelAnime);
+
+    // Miniboss Overhaul: while the bats swarm Link, Gomess hurls slow, homing cursed flames
+    if (this->eoTimer > 0) {
+        this->eoTimer--;
+    } else if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+        EoShot* flame = EoShot_OrbAimed(play, &this->actor, BO_ORB_CURSE, &this->actor.focus.pos, 6.0f, 0);
+
+        if (flame != NULL) {
+            flame->homing = 0x180;
+            flame->orb.life = flame->orb.maxLife = 150;
+        }
+        Actor_PlaySfx(&this->actor, NA_SE_EN_DEATH_ATTACK);
+        this->eoTimer = 75;
+    }
 
     if (this->actor.params >= 5) {
         play->envCtx.lightSettingOverride = 26;

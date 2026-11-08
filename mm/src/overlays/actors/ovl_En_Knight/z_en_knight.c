@@ -6,6 +6,7 @@
 
 #include "prevent_bss_reordering.h"
 #include "z_en_knight.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64shrink_window.h"
 #include "overlays/actors/ovl_Mir_Ray3/z_mir_ray3.h"
 #include "overlays/effects/ovl_Effect_Ss_Hitmark/z_eff_ss_hitmark.h"
@@ -572,7 +573,8 @@ void EnKnight_Init(Actor* thisx, PlayState* play) {
         EnKnight_SetupFlyingHead(this, play);
         Collider_InitAndSetCylinder(play, &this->headAttackCollider, &this->actor, &sHeadAttackColliderCylinderInit);
         Collider_InitAndSetCylinder(play, &this->headCollider, &this->actor, &sHeadColliderCylinderInit);
-        this->actor.colChkInfo.health = 10 - BREG(40);
+        this->actor.colChkInfo.health = EO_HP2(10) - BREG(40); // Miniboss Overhaul: 10 -> 20
+        this->eoSpitTimer = 60;
         return;
     }
 
@@ -619,7 +621,7 @@ void EnKnight_Init(Actor* thisx, PlayState* play) {
                                   this->swordColliderElements);
         SkelAnime_InitFlex(play, &this->skelAnime, &gKnightSkel, &gKnightIdleAnim, this->jointTable, this->morphTable,
                            KNIGHT_LIMB_MAX);
-        this->actor.colChkInfo.health = 6 - BREG(40);
+        this->actor.colChkInfo.health = EO_HP2(6) - BREG(40); // Miniboss Overhaul: 6 -> 12
         Actor_SetScale(&this->actor, KREG(13) * 0.001f + 0.013f);
     } else {
         // Igos
@@ -628,7 +630,7 @@ void EnKnight_Init(Actor* thisx, PlayState* play) {
                                   this->swordColliderElements);
         SkelAnime_InitFlex(play, &this->skelAnime, &gIgosSkel, &gKnightIdleAnim, this->jointTable, this->morphTable,
                            IGOS_LIMB_MAX);
-        this->actor.colChkInfo.health = 14 - BREG(41);
+        this->actor.colChkInfo.health = EO_HP2(14) - BREG(41); // Miniboss Overhaul: 14 -> 28
         Actor_SetScale(&this->actor, KREG(12) * 0.001f + 0.017f);
         this->igosCurtainReaction = Rand_ZeroFloat(1.9999f); // random 0 or 1
     }
@@ -859,6 +861,17 @@ void EnKnight_HeavyAttack(EnKnight* this, PlayState* play) {
 
     if (Animation_OnFrame(&this->skelAnime, 1.0f)) {
         Actor_PlaySfx(&this->actor, this->attackSfx);
+    }
+
+    // Miniboss Overhaul: the heavy blow tears a wave through the floor: cursed flames for the lackeys, fire for Igos
+    if (Animation_OnFrame(&this->skelAnime, 5.0f) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+        Vec3f wavePos = this->actor.world.pos;
+
+        wavePos.x += Math_SinS(this->actor.world.rot.y) * 50.0f;
+        wavePos.z += Math_CosS(this->actor.world.rot.y) * 50.0f;
+        wavePos.y = this->actor.floorHeight;
+        EoShot_GroundWave(play, &this->actor, (this == sIgosInstance) ? EO_LOOK_FIRE : EO_LOOK_DARK, &wavePos,
+                          this->actor.world.rot.y, 12.0f, 40, 0x10);
     }
 
     if (Animation_OnFrame(&this->skelAnime, this->animEndFrame)) {
@@ -1582,9 +1595,9 @@ void EnKnight_FallOver(EnKnight* this, PlayState* play) {
         EnKnight_SetupGetBackUp(this, play);
 
         if (this == sIgosInstance) {
-            this->actor.colChkInfo.health = 14 - BREG(41);
+            this->actor.colChkInfo.health = EO_HP2(14) - BREG(41);
         } else {
-            this->actor.colChkInfo.health = 6 - BREG(40);
+            this->actor.colChkInfo.health = EO_HP2(6) - BREG(40);
         }
         this->bodyCollider.elements[0].base.acElemFlags &= ~ACELEM_HIT;
         this->bodyCollider.elements[1].base.acElemFlags &= ~ACELEM_HIT;
@@ -1597,6 +1610,16 @@ void EnKnight_SetupDie(EnKnight* this, PlayState* play) {
     this->actionFunc = EnKnight_Die;
     this->timers[2] = 50;
     this->drawDmgEffState = KNIGHT_DMGEFF_STATE_20;
+
+    // Miniboss Overhaul: a fallen lackey's spirit lashes out at Link one last time
+    if ((this != sIgosInstance) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+        EoShot* spirit = EoShot_OrbAimed(play, &this->actor, BO_ORB_CURSE, &this->actor.focus.pos, 7.0f, 0);
+
+        if (spirit != NULL) {
+            spirit->homing = 0x200;
+            spirit->orb.life = spirit->orb.maxLife = 110;
+        }
+    }
 
     if (this == sIgosInstance) {
         Audio_RestorePrevBgm();
@@ -2233,6 +2256,23 @@ void EnKnight_BreathAttack(EnKnight* this, PlayState* play) {
 
         case KNIGHT_SUB_ACTION_BREATH_ATTACK_1:
             EnKnight_SpawnBreathEffects(this, play, 0x1600);
+
+            // Miniboss Overhaul: the breath sets the floor alight in slow-drifting patches
+            if (((this->timers[0] % 25) == 0) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+                Player* player = GET_PLAYER(play);
+                Vec3f patchPos = this->actor.world.pos;
+                f32 reach = CLAMP(this->actor.xzDistToPlayer * 0.7f, 90.0f, 260.0f);
+                s16 yaw = this->actor.shape.rot.y + this->neckYawTarget;
+                f32 floorY;
+
+                patchPos.x += Math_SinS(yaw) * reach;
+                patchPos.z += Math_CosS(yaw) * reach;
+                if (Eo_FindFloor(play, &patchPos, 200.0f, &floorY)) {
+                    patchPos.y = floorY;
+                    EoShot_GroundWave(play, &this->actor, EO_LOOK_FIRE, &patchPos,
+                                      Math_Vec3f_Yaw(&patchPos, &player->actor.world.pos), 1.2f, 110, 0x10);
+                }
+            }
 
             if (KREG(21) == 0) {
                 this->neckYawTarget = Math_SinS((KREG(84) + 0x11DC) * this->randTimer) * (KREG(85) * 0x800 + 0x1800) +
@@ -3268,6 +3308,16 @@ void EnKnight_FlyingHead(EnKnight* this, PlayState* play) {
 
         case KNIGHT_SUB_ACTION_FLYING_HEAD_1:
             this->jawRotation = Math_SinS((KREG(40) * 0x100 + 0x1200) * this->randTimer) * 1000.0f + 1000.0f;
+
+            // Miniboss Overhaul: the flying head spits fireballs
+            if (this->eoSpitTimer > 0) {
+                this->eoSpitTimer--;
+            } else if ((this->timers[1] > 60) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+                this->eoSpitTimer = (s16)(Rand_ZeroFloat(20.0f) + 40.0f);
+                this->jawRotation = 4000;
+                EoShot_OrbAimed(play, &this->actor, BO_ORB_FIRE, &this->actor.focus.pos, 14.0f, 0);
+                Actor_PlaySfx(&this->actor, NA_SE_EN_BOSU_HEAD_SHORT);
+            }
             dx = this->retreatTowards.x - this->actor.world.pos.x;
             dy = this->retreatTowards.y - this->actor.world.pos.y;
             dz = this->retreatTowards.z - this->actor.world.pos.z;

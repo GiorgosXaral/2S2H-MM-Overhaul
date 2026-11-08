@@ -5,6 +5,8 @@
  */
 
 #include "z_en_bigokuta.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
+#include "overlays/actors/ovl_En_Okuta/z_en_okuta.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE)
@@ -229,6 +231,8 @@ void EnBigokuta_SetupRise(EnBigokuta* this, PlayState* play) {
     s32 i;
     s16 angle = 0;
 
+    this->eoShotTimer = 40;
+
     Animation_PlayOnce(&this->skelAnime, &gBigOctoRiseOutOfWaterAnim);
     splashPos.y = this->picto.actor.home.pos.y;
     for (i = 0; i < 8; i++) {
@@ -253,8 +257,56 @@ void EnBigokuta_SetupIdleAboveWater(EnBigokuta* this) {
     this->actionFunc = EnBigokuta_IdleAboveWater;
 }
 
+/**
+ * Enemy Overhaul: out of the water, Big Octo spits spreads of Octorok rocks at Link when he keeps his distance (the
+ * Mirror Shield or Hero's Shield sends them back), and once badly hurt it calls two Octoroks up from its pond. It
+ * leaves the boat cruise alone.
+ */
+void EnBigokuta_EoAttacks(EnBigokuta* this, PlayState* play) {
+    s32 i;
+
+    if (!EO_ENEMIES_ON() || !Eo_CanAttack(play) || CHECK_EVENTINF(EVENTINF_35) || CHECK_EVENTINF(EVENTINF_41)) {
+        return;
+    }
+
+    if (!this->eoCalledOctoroks && (this->picto.actor.colChkInfo.health > 0) &&
+        (this->picto.actor.colChkInfo.health <= 2)) {
+        this->eoCalledOctoroks = true;
+        for (i = 0; i < 2; i++) {
+            s16 yaw = this->picto.actor.yawTowardsPlayer + ((i == 0) ? 0x3000 : -0x3000);
+            Vec3f pos;
+            WaterBox* waterBox;
+            f32 surfaceY;
+
+            pos.x = this->picto.actor.world.pos.x + (Math_SinS(yaw) * 260.0f);
+            pos.z = this->picto.actor.world.pos.z + (Math_CosS(yaw) * 260.0f);
+            if (WaterBox_GetSurface1_2(play, &play->colCtx, pos.x, pos.z, &surfaceY, &waterBox)) {
+                pos.y = surfaceY;
+                EoSummon_Spawn(play, &this->picto.actor, ACTOR_EN_OKUTA, &pos, yaw, EN_OKUTA_TYPE_RED_OCTOROK);
+            }
+        }
+    }
+
+    if (this->eoShotTimer > 0) {
+        this->eoShotTimer--;
+    } else if (this->picto.actor.xzDistToPlayer > 180.0f) {
+        Vec3f pos = this->picto.actor.world.pos;
+
+        pos.x += Math_SinS(this->picto.actor.shape.rot.y) * 70.0f;
+        pos.y = this->picto.actor.home.pos.y + 30.0f;
+        pos.z += Math_CosS(this->picto.actor.shape.rot.y) * 70.0f;
+        for (i = -1; i <= 1; i++) {
+            Eo_SpawnAnyObject(play, ACTOR_EN_OKUTA, pos.x, pos.y, pos.z, 0,
+                              this->picto.actor.yawTowardsPlayer + (i * 0x0E00), 0, EN_OKUTA_TYPE_RED_PROJECTILE);
+        }
+        Actor_PlaySfx(&this->picto.actor, NA_SE_EN_NUTS_THROW);
+        this->eoShotTimer = 80;
+    }
+}
+
 void EnBigokuta_IdleAboveWater(EnBigokuta* this, PlayState* play) {
     SkelAnime_Update(&this->skelAnime);
+    EnBigokuta_EoAttacks(this, play);
     Math_StepToF(&this->picto.actor.world.pos.y, this->picto.actor.home.pos.y - 16.5f, 2.5f);
     Math_ApproachS(&this->picto.actor.shape.rot.y, this->picto.actor.yawTowardsPlayer, 5, 0x1000);
 

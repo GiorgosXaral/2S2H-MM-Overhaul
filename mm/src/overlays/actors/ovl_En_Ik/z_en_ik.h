@@ -74,6 +74,9 @@ typedef struct EnIk {
     /* 0x0478 */ ColliderTris colliderTris;
     /* 0x0498 */ ColliderTrisElement shieldColliderElements[2];
     /* 0x0550 */ IronKnuckleEffect effects[IRON_KNUCKLE_ARMOR_BODYPART_MAX];
-} EnIk; // size = 0x668
+    // Miniboss Overhaul
+    s16 eoAxeCooldown;
+    u8 eoAxeThrown;
+} EnIk; // size = 0x668 (vanilla)
 
 #endif // Z_EN_IK_H

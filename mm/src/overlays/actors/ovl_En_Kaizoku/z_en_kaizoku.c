@@ -5,6 +5,7 @@
  */
 
 #include "z_en_kaizoku.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "overlays/actors/ovl_En_Arrow/z_en_arrow.h"
 #include "overlays/effects/ovl_Effect_Ss_Hitmark/z_eff_ss_hitmark.h"
@@ -281,7 +282,7 @@ void EnKaizoku_Init(Actor* thisx, PlayState* play) {
     this->picto.actor.colChkInfo.mass = 80;
     ActorShape_Init(&this->picto.actor.shape, 0.0f, ActorShadow_DrawFeet, 0.0f);
     this->textType = KAIZOKU_GET_TYPE(this);
-    this->picto.actor.colChkInfo.health = 8;
+    this->picto.actor.colChkInfo.health = EO_HP2(8); // Miniboss Overhaul: 8 -> 16
     this->exitIndex = KAIZOKU_GET_EXIT_INDEX(&this->picto.actor);
     this->switchFlag = KAIZOKU_GET_SWITCH_FLAG(&this->picto.actor);
 
@@ -1173,6 +1174,16 @@ void EnKaizoku_Jump(EnKaizoku* this, PlayState* play) {
         this->picto.actor.speed = 0.0f;
         this->picto.actor.velocity.y = 0.0f;
         this->picto.actor.world.pos.y = this->picto.actor.floorHeight;
+
+        // Miniboss Overhaul: she lands from her flip with a blow that sends a shockwave through the floor
+        if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+            Vec3f wavePos = this->picto.actor.world.pos;
+
+            wavePos.x += Math_SinS(this->picto.actor.shape.rot.y) * 40.0f;
+            wavePos.z += Math_CosS(this->picto.actor.shape.rot.y) * 40.0f;
+            EoShot_GroundWave(play, &this->picto.actor, EO_LOOK_DUST, &wavePos, this->picto.actor.shape.rot.y, 13.0f,
+                              35, 0x10);
+        }
         EnKaizoku_SetupSlash(this);
     }
 }
@@ -1446,6 +1457,14 @@ void EnKaizoku_SpinAttack(EnKaizoku* this, PlayState* play) {
     } else if (Animation_OnFrame(&this->skelAnime, 13.0f)) {
         Actor_SpawnFloorDustRing(play, &this->picto.actor, &this->leftFootPos, 3.0f, 2, 2.0f, 0, 0, false);
         Actor_SpawnFloorDustRing(play, &this->picto.actor, &this->rightFootPos, 3.0f, 2, 2.0f, 0, 0, false);
+
+        // Miniboss Overhaul: the whirling blades throw a ring of wind across the floor
+        if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+            Vec3f ringPos = this->picto.actor.world.pos;
+
+            ringPos.y = this->picto.actor.floorHeight;
+            EoShot_Ring(play, &this->picto.actor, EO_LOOK_DUST, &ringPos, 380.0f, 10.0f, 0x10);
+        }
         this->swordState = 1;
         this->picto.actor.speed = 10.0f;
         Actor_PlaySfx(&this->picto.actor, NA_SE_EN_PIRATE_ATTACK);

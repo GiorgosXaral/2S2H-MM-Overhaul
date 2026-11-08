@@ -89,6 +89,9 @@ typedef struct EnRd {
     /* 0x3EF */ u8 action;
     /* 0x3F0 */ u8 damageEffect;
     /* 0x3F1 */ s8 unk_3F1; // related to player->unk_ADD
-} EnRd; // size = 0x3F4
+    // Enemy Overhaul
+    u8 eoRevived;
+    u8 eoKillEffect;
+} EnRd; // size = 0x3F4 (vanilla)
 
 #endif // Z_EN_RD_H

@@ -27,6 +27,10 @@ typedef struct EnMkk {
     /* 0x16C */ Vec3f unk_16C;
     /* 0x178 */ f32 unk_178;
     /* 0x17C */ ColliderSphere collider;
-} EnMkk; // size = 0x1D4
+    // Enemy Overhaul
+    u8 eoBig;       // a Big Boe, made of this Boe and `eoAbsorbed` others
+    u8 eoAbsorbed;
+    s16 eoMergeTimer;
+} EnMkk; // size = 0x1D4 (vanilla)
 
 #endif // Z_EN_MKK_H

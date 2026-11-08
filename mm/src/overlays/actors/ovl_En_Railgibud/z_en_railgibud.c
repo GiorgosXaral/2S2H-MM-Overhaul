@@ -5,6 +5,7 @@
  */
 
 #include "z_en_railgibud.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64rumble.h"
 #include "overlays/effects/ovl_Effect_Ss_Hahen/z_eff_ss_hahen.h"
 
@@ -373,6 +374,21 @@ void EnRailgibud_SetupWalkToPlayer(EnRailgibud* this) {
 void EnRailgibud_WalkToPlayer(EnRailgibud* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
     s32 pad;
+
+    // Enemy Overhaul: a Gibdo lunges with its bandaged arms out, grabbing Link from further away
+    if (EO_ENEMIES_ON()) {
+        if (this->eoLungeTimer > 0) {
+            this->eoLungeTimer--;
+            this->actor.speed = (this->eoLungeTimer > 0) ? 5.0f : 0.4f;
+        } else if (this->eoLungeCooldown > 0) {
+            this->eoLungeCooldown--;
+        } else if ((this->grabWaitTimer == 0) && (this->actor.xzDistToPlayer > 60.0f) &&
+                   (this->actor.xzDistToPlayer < 140.0f) && Actor_IsFacingPlayer(&this->actor, 0x1800)) {
+            this->eoLungeTimer = 12;
+            this->eoLungeCooldown = 100;
+            Actor_PlaySfx(&this->actor, NA_SE_EN_REDEAD_CRY);
+        }
+    }
 
     Math_ScaledStepToS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 0xFA);
     this->actor.world.rot = this->actor.shape.rot;

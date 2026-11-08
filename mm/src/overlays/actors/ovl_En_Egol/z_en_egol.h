@@ -109,6 +109,11 @@ typedef struct EnEgol {
     /* 0x1E34 */ Vec3f subCamAt;
     /* 0x1E40 */ Vec3f subCamEye;
     /* 0x1E4C */ UNK_TYPE1 unk_1E4C[0x24]; // Vec3f[3]?
-} EnEgol; // size = 0x1E70
+    // Eyegore Overhaul
+    s16 eoSweepTimer;
+    u8 eoSwept;
+    u8 eoSecondSlam;
+    Vec3f eoSweepTarget;
+} EnEgol; // size = 0x1E70 (vanilla)
 
 #endif // Z_EN_EGOL_H

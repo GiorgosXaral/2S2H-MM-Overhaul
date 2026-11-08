@@ -8,6 +8,11 @@ struct EnJso;
 
 #define EN_JSO_GET_HINT_TYPE(thisx) ((thisx)->params)
 
+// Miniboss Overhaul: a Garo called in by the Garo Master (or by the Garo ambush chain). It skips the intro cutscene,
+// fights right away, and vanishes in flames instead of talking when defeated.
+#define EN_JSO_PARAMS_SUMMONED 0x40
+#define EN_JSO_IS_SUMMONED(thisx) (((thisx)->params & EN_JSO_PARAMS_SUMMONED) != 0)
+
 #define EN_JSO_AFTERIMAGE_COUNT 20
 
 typedef void (*EnJsoActionFunc)(struct EnJso*, PlayState*);

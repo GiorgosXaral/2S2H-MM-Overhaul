@@ -23,6 +23,7 @@
  */
 
 #include "z_en_rd.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64rumble.h"
 #include "objects/object_rd/object_rd.h"
 #include "overlays/actors/ovl_Obj_Ice_Poly/z_obj_ice_poly.h"
@@ -928,6 +929,23 @@ void EnRd_AttemptPlayerFreeze(EnRd* this, PlayState* play) {
             Player_SetAutoLockOnActor(play, &this->actor);
         }
         Actor_PlaySfx(&this->actor, NA_SE_EN_REDEAD_AIM);
+
+        // Enemy Overhaul: the scream draws every ReDead in earshot towards Link
+        if (EO_ENEMIES_ON() && !(this->flags & EN_RD_FLAG_CANNOT_FREEZE_PLAYER)) {
+            Actor* other;
+
+            for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; other != NULL; other = other->next) {
+                EnRd* redead = (EnRd*)other;
+
+                if ((other != &this->actor) && (other->id == ACTOR_EN_RD) && (other->update != NULL) &&
+                    (other->colChkInfo.health > 0) && (Actor_WorldDistXZToActor(other, &this->actor) < 600.0f) &&
+                    ((redead->action == EN_RD_ACTION_IDLE) || (redead->action == EN_RD_ACTION_WALKING_TO_HOME) ||
+                     (redead->action == EN_RD_ACTION_SQUATTING_DANCE) ||
+                     (redead->action == EN_RD_ACTION_CLAPPING_DANCE) || (redead->action == EN_RD_ACTION_PIROUETTE))) {
+                    EnRd_SetupWalkToPlayer(redead, play);
+                }
+            }
+        }
         EnRd_SetupWalkToPlayer(this, play);
     }
 }
@@ -1045,6 +1063,7 @@ void EnRd_Damage(EnRd* this, PlayState* play) {
 
 void EnRd_SetupDead(EnRd* this) {
     Animation_MorphToPlayOnce(&this->skelAnime, &gGibdoRedeadDeathAnim, -1.0f);
+    this->eoKillEffect = this->damageEffect;
     this->action = EN_RD_ACTION_DEAD;
     this->deathTimer = 300;
     this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
@@ -1060,6 +1079,22 @@ void EnRd_Dead(EnRd* this, PlayState* play) {
 
     Math_SmoothStepToS(&this->headRotY, 0, 1, 0x7D0, 0);
     Math_SmoothStepToS(&this->torsoRotY, 0, 1, 0x7D0, 0);
+
+    // Enemy Overhaul: a ReDead that wasn't put to rest with fire or light gets back up, once, at half strength
+    if ((this->deathTimer == 200) && !this->eoRevived && EO_ENEMIES_ON() &&
+        (this->eoKillEffect != EN_RD_DMGEFF_FIRE_ARROW) && (this->eoKillEffect != EN_RD_DMGEFF_LIGHT_ARROW) &&
+        (this->eoKillEffect != EN_RD_DMGEFF_LIGHT_RAY) && (this->drawDmgEffType != ACTOR_DRAW_DMGEFF_FIRE)) {
+        this->eoRevived = true;
+        this->actor.colChkInfo.health = 4;
+        this->alpha = 255;
+        this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
+        Actor_ChangeCategory(play, &play->actorCtx, &this->actor, ACTORCAT_ENEMY);
+        EnRd_UpdateParentForOtherRedeads(play, &this->actor, false);
+        Eo_Puff(play, &this->actor.world.pos, 1.5f);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_REDEAD_AIM);
+        EnRd_SetupStandUp(this);
+        return;
+    }
 
     if (SkelAnime_Update(&this->skelAnime)) {
         if (this->deathTimer == 0) {

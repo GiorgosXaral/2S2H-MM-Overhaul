@@ -1938,6 +1938,79 @@ void BenMenu::AddEnhancements() {
                      .Tooltip("While you wear the Fierce Deity's Mask, Majora takes half damage, Majora's Mask uses its "
                               "fire beam, and every new projectile pattern is bigger.")
                      .DefaultValue(true));
+    AddWidget(path, "Miniboss & Enemy Overhaul", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Enemy Overhaul: Miniboss HP", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.MinibossHP")
+        .Options(CheckboxOptions()
+                     .Tooltip("Gekko (both fights), Wart, Captain Keeta, Iron Knuckles, Igos du Ikana and his lackeys, "
+                              "the Garo Master, Gomess, Wizzrobe, the Pirate Fighters and Big Poes have twice their "
+                              "health.\n\nTakes effect the next time the fight starts.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Miniboss Attacks", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.MinibossAttacks")
+        .Options(CheckboxOptions()
+                     .Tooltip("Every miniboss gains new attacks made from the game's own effects and enemies: shockwaves, "
+                              "ground waves, thrown axes, summoned Stalchildren and Garos, Gomess teleporting behind "
+                              "you, Wart's light beam and more. Their pauses and weak point windows are never "
+                              "shortened.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Regular Enemies", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.Enemies")
+        .Options(CheckboxOptions()
+                     .Tooltip("Big Octos, Boes, Dinolfos, Eenos, Wolfos, Death Armos, ReDeads, Gibdos and the Poe "
+                              "Sisters fight smarter: pack attacks, feints, howls for help, merging Boes, calling "
+                              "Octoroks and more.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Eyegore", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.Eyegore")
+        .Options(CheckboxOptions()
+                     .Tooltip("Eyegores have twice their health, sweep five lasers, slam out shockwaves and falling "
+                              "rocks, turn on you when you get behind them, and go into a rage at half health.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Deep Pythons", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.DeepPython")
+        .Options(CheckboxOptions()
+                     .Tooltip("Deep Pythons spit water, snap at you from their burrows, and the last one is a real "
+                              "miniboss with its own music. The eight-python count stays the same.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Deep Pythons Swim Free", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.DeepPythonFreeSwim")
+        .Options(CheckboxOptions()
+                     .Tooltip("Deep Pythons leave their burrows and hunt you through the water, going home when hurt "
+                              "or when you swim away. Off: they stay in their burrows as in the original game.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Them", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.Them")
+        .Options(CheckboxOptions()
+                     .Tooltip("The ranch invaders weave and blink, fire slow balls of light, send bigger leaders that "
+                              "take two arrows, and the ball of light over the barn drops light bombs near you. They "
+                              "still reach the barn at the same time, so winning and losing work as before.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: More Encounters", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.Encounters")
+        .Options(CheckboxOptions()
+                     .Tooltip("Enemies sometimes bring companions of their own kind, or a creature from the same "
+                              "region, and random encounters sometimes send an extra: a second Dragonfly in the swamp, a "
+                              "second Garo in Ikana.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Encounters in Dungeons", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.EncountersInDungeons")
+        .Options(CheckboxOptions()
+                     .Tooltip("Lets companions appear in dungeons too, except in rooms where a door or chest opens once "
+                              "every enemy is defeated.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Elite Enemies", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.Elites")
+        .Options(CheckboxOptions()
+                     .Tooltip("About one enemy in twenty is an elite: bigger, sparkling gold, twice the health and a "
+                              "better drop.")
+                     .DefaultValue(true));
+    AddWidget(path, "Enemy Overhaul: Final Day Frenzy", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EnemyOverhaul.FinalDayFrenzy")
+        .Options(CheckboxOptions()
+                     .Tooltip("On the Final Day companions are twice as common, and after midnight three times as "
+                              "common, in bigger groups, with twice as many elites.")
+                     .DefaultValue(true));
     AddWidget(path, "Damage Multiplier", WIDGET_CVAR_COMBOBOX)
         .CVar("gEnhancements.DifficultyOptions.DamageMultiplier")
         .Options(ComboboxOptions()

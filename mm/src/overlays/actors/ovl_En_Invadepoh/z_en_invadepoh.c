@@ -36,6 +36,7 @@
 #include "overlays/actors/ovl_En_Door/z_en_door.h"
 #include "assets/objects/gameplay_keep/gameplay_keep.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
@@ -2522,6 +2523,236 @@ void EnInvadepoh_InvasionHandler_Update(Actor* thisx, PlayState* play2) {
     this->actor.draw = EnInvadepoh_UpdateEffects() ? EnInvadepoh_InvasionHandler_Draw : NULL;
 }
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * 2S2H [Enhancement] Miniboss & Enemy Overhaul: "Them"
+ *
+ * The invasion keeps its rules: every alien still reaches the barn at the same time, is still killed by one arrow (the
+ * leaders take two), and the kill count, respawn delays and the win / lose checks are untouched. What changes:
+ *  - aliens weave from side to side across their path instead of gliding in a straight line;
+ *  - about half of them "blink" once on the way: they fade out, can't be hit for a moment, and fade back in on the
+ *    other side of their path;
+ *  - once a few have fallen, a leader can warp in: bigger, it shrugs off the first arrow and fires a fan of beams;
+ *  - aliens close to Link fire slow balls of light at him (half a heart, no more than one alien every few seconds);
+ *  - the ball of light over the barn drops light bombs around Link every ten seconds or so, their landing spots
+ *    marked on the ground, so standing still in one spot to snipe gets punished.
+ * --------------------------------------------------------------------------------------------------------------- */
+
+#define EO_THEM_LEADER_SCALE 1.35f
+
+static s16 sEoAlienShotCooldown = 0;
+static u32 sEoAlienShotFrame = 0;
+
+static f32 EnInvadepoh_Alien_EoScale(EnInvadepoh* this) {
+    return this->eoLeader ? EO_THEM_LEADER_SCALE : 1.0f;
+}
+
+/**
+ * Called right before an alien warps in: picks whether it blinks on the way and whether it is a leader.
+ */
+static void EnInvadepoh_Alien_EoRoll(EnInvadepoh* this) {
+    s32 i;
+
+    this->eoLeader = false;
+    this->eoLeaderHits = 0;
+    this->eoBlinkTimer = 0;
+    this->eoHurtTimer = 0;
+    this->eoWeavePhase = (s16)(EN_INVADEPOH_GET_INDEX(&this->actor) * 0x2000);
+    this->eoShotTimer = 120 + (s16)Rand_ZeroFloat(120.0f);
+    this->eoBlinkAt = (Rand_ZeroOne() < 0.5f) ? (0.35f + Rand_ZeroFloat(0.4f)) : 2.0f;
+    this->collider.dim.radius = 40;
+    this->collider.dim.height = 95;
+
+    if (!EO_THEM_ON() || (EnInvadepoh_Alien_GetKillCount() < 4)) {
+        return;
+    }
+
+    for (i = 0; i < ALIEN_COUNT; i++) {
+        if ((sAliens[i] != NULL) && (sAliens[i] != this) && sAliens[i]->eoLeader) {
+            return; // one leader at a time
+        }
+    }
+
+    if (Rand_ZeroOne() < 0.25f) {
+        this->eoLeader = true;
+        Actor_SetScale(&this->actor, 0.01f * EO_THEM_LEADER_SCALE);
+        this->collider.dim.radius = 40 * EO_THEM_LEADER_SCALE;
+        this->collider.dim.height = 95 * EO_THEM_LEADER_SCALE;
+    }
+}
+
+/**
+ * Sways the alien across its path. Runs after the vanilla path update, which puts the alien back on the path every
+ * frame, so nothing builds up: the alien is always within reach of its vanilla position, and fully back on the path
+ * by the time it reaches the barn.
+ */
+static void EnInvadepoh_Alien_EoWeave(EnInvadepoh* this) {
+    f32 amplitude;
+    f32 offset;
+    s16 across;
+
+    if (!EO_THEM_ON()) {
+        return;
+    }
+
+    this->eoWeavePhase += 0x190;
+    amplitude = this->eoLeader ? 90.0f : 70.0f;
+    amplitude *= CLAMP((1.0f - this->pathProgress) * 5.0f, 0.0f, 1.0f);
+    amplitude *= CLAMP(this->pathProgress * 20.0f, 0.0f, 1.0f);
+    offset = Math_SinS(this->eoWeavePhase) * amplitude;
+    across = this->actor.shape.rot.y + 0x4000;
+    this->actor.world.pos.x += Math_SinS(across) * offset;
+    this->actor.world.pos.z += Math_CosS(across) * offset;
+}
+
+/**
+ * The blink: fade out (8 frames), gone (24 frames), fade back in on the other side of the path (8 frames). Returns
+ * true while it runs.
+ */
+static s32 EnInvadepoh_Alien_EoBlink(EnInvadepoh* this) {
+    if (this->eoBlinkTimer == 0) {
+        if (!EO_THEM_ON() || (this->pathProgress < this->eoBlinkAt) || (this->pathProgress > 0.85f)) {
+            return false;
+        }
+        this->eoBlinkAt = 2.0f;
+        this->eoBlinkTimer = 40;
+        EnInvadepoh_SpawnWarpEffect(&this->actor.world.pos);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_FOLLOWERS_STAY);
+    }
+
+    this->eoBlinkTimer--;
+    this->collider.base.atFlags &= ~AT_ON;
+    this->collider.base.acFlags &= ~AC_ON;
+    this->eyeBeamAlpha = 0;
+
+    if (this->eoBlinkTimer >= 32) {
+        this->alpha = (this->eoBlinkTimer - 32) * 31;
+        this->shouldDraw = true;
+    } else if (this->eoBlinkTimer >= 8) {
+        this->alpha = 0;
+        this->shouldDraw = false;
+        if (this->eoBlinkTimer == 20) {
+            this->eoWeavePhase += 0x8000; // come back on the other side
+        }
+        if (this->eoBlinkTimer == 8) {
+            EnInvadepoh_SpawnWarpEffect(&this->actor.world.pos);
+        }
+    } else if (this->eoBlinkTimer > 0) {
+        this->alpha = (8 - this->eoBlinkTimer) * 31;
+        this->shouldDraw = true;
+    } else {
+        this->alpha = 255;
+        this->shouldDraw = true;
+        this->eyeBeamAlpha = 255;
+        this->collider.base.atFlags |= AT_ON;
+        this->collider.base.acFlags |= AC_ON;
+    }
+    return true;
+}
+
+/**
+ * Aliens near Link fire slow balls of light at him. Only one alien fires every few seconds.
+ */
+static void EnInvadepoh_Alien_EoShoot(EnInvadepoh* this, PlayState* play) {
+    Vec3f pos;
+    EoShot* shot;
+    s32 i;
+    s32 count;
+
+    if (sEoAlienShotFrame != play->gameplayFrames) {
+        sEoAlienShotFrame = play->gameplayFrames;
+        if (sEoAlienShotCooldown > 0) {
+            sEoAlienShotCooldown--;
+        }
+    }
+
+    if (!EO_THEM_ON() || (sInvasionState != INVASION_STATE_ACTIVE)) {
+        return;
+    }
+    if (this->eoShotTimer > 0) {
+        this->eoShotTimer--;
+        return;
+    }
+    if ((sEoAlienShotCooldown > 0) || !Eo_CanAttack(play) || (this->actor.xzDistToPlayer > 900.0f) ||
+        (this->actor.xzDistToPlayer < 120.0f)) {
+        return;
+    }
+
+    pos = this->actor.world.pos;
+    pos.y += 75.0f * EnInvadepoh_Alien_EoScale(this);
+    count = this->eoLeader ? 3 : 1;
+    for (i = 0; i < count; i++) {
+        shot = EoShot_OrbAimed(play, &this->actor, BO_ORB_LIGHT, &pos, 9.0f, (i - (count / 2)) * 0x1000);
+        if (shot != NULL) {
+            // A sting, not a stun: half a heart and no electric shock
+            shot->orb.collider.elem.atDmgInfo.damage = 0x08;
+            shot->orb.collider.elem.atDmgInfo.effect = 0;
+        }
+    }
+    Actor_PlaySfx(&this->actor, NA_SE_EN_FOLLOWERS_BEAM);
+    this->eoShotTimer = 200 + (s16)Rand_ZeroFloat(120.0f);
+    sEoAlienShotCooldown = this->eoLeader ? 150 : 110;
+}
+
+/**
+ * A leader's first arrow only staggers it. Returns true when the hit was absorbed.
+ */
+static s32 EnInvadepoh_Alien_EoShrugOffHit(EnInvadepoh* this) {
+    if (!EO_THEM_ON() || !this->eoLeader || (this->eoLeaderHits != 0) ||
+        ((this->actionFunc != EnInvadepoh_Alien_FloatForward) && (this->actionFunc != EnInvadepoh_Alien_WarpIn))) {
+        return false;
+    }
+
+    this->collider.base.acFlags &= ~AC_HIT;
+    this->eoLeaderHits = 1;
+    this->eoHurtTimer = 14;
+    Actor_SetColorFilter(&this->actor, COLORFILTER_COLORFLAG_RED, 255, COLORFILTER_BUFFLAG_OPA, 14);
+    Actor_PlaySfx(&this->actor, NA_SE_EN_FOLLOWERS_DAMAGE);
+    return true;
+}
+
+/**
+ * The ball of light over the barn drops light bombs on and around Link. Each one marks its landing spot with dust for
+ * the whole fall.
+ */
+static void EnInvadepoh_Ufo_EoAttack(EnInvadepoh* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f spot;
+    f32 floorY;
+    s32 i;
+
+    if (!EO_THEM_ON() || (sInvasionState != INVASION_STATE_ACTIVE)) {
+        return;
+    }
+
+    if (this->eoUfoTimer > 0) {
+        this->eoUfoTimer--;
+        if ((this->eoUfoTimer == 25) && Eo_CanAttack(play)) {
+            Audio_PlaySfx(NA_SE_EV_UFO_LIGHT_BEAM);
+        }
+        return;
+    }
+
+    this->eoUfoTimer = 330 + (s16)Rand_ZeroFloat(150.0f);
+    if (!Eo_CanAttack(play) || (Actor_WorldDistXZToActor(&this->actor, &player->actor) > 2500.0f)) {
+        return;
+    }
+
+    for (i = 0; i < 3; i++) {
+        spot = player->actor.world.pos;
+        if (i > 0) {
+            s16 yaw = (s16)Rand_Next();
+            f32 dist = 120.0f + Rand_ZeroFloat(80.0f);
+
+            spot.x += Math_SinS(yaw) * dist;
+            spot.z += Math_CosS(yaw) * dist;
+        }
+        if (Eo_FindFloor(play, &spot, 400.0f, &floorY)) {
+            spot.y = floorY;
+            EoShot_FallingOrb(play, &this->actor, BO_ORB_LIGHT, &spot, 1200.0f + (i * 160.0f), 0x10);
+        }
+    }
+}
+
 void EnInvadepoh_Alien_SetupWaitForInvasion(EnInvadepoh* this) {
     this->collider.base.atFlags &= ~AT_ON;
     this->collider.base.acFlags &= ~AC_ON;
@@ -2546,6 +2777,7 @@ void EnInvadepoh_Alien_WaitForInvasion(EnInvadepoh* this, PlayState* play) {
 
     if (sAlienStateFlags[EN_INVADEPOH_GET_INDEX(&this->actor)] & ALIEN_STATE_FLAG_ACTIVE) {
         Actor_SetScale(&this->actor, 0.01f);
+        EnInvadepoh_Alien_EoRoll(this);
         EnInvadepoh_SnapToFloor(this);
         EnInvadepoh_SpawnWarpEffect(&this->actor.world.pos);
         EnInvadepoh_Alien_SetupWarpIn(this);
@@ -2575,6 +2807,7 @@ void EnInvadepoh_Alien_WaitToRespawn(EnInvadepoh* this, PlayState* play) {
 
     if (this->pathProgress > 0.0f) {
         Actor_SetScale(&this->actor, 0.01f);
+        EnInvadepoh_Alien_EoRoll(this);
         EnInvadepoh_SnapToFloor(this);
         EnInvadepoh_SpawnWarpEffect(&this->actor.world.pos);
         EnInvadepoh_Alien_SetupWarpIn(this);
@@ -2603,6 +2836,7 @@ void EnInvadepoh_Alien_WarpIn(EnInvadepoh* this, PlayState* play) {
     EnInvadepoh_Alien_PathComputeProgress(this);
     EnInvadepoh_Alien_PathUpdate(this, play);
     EnInvadepoh_Alien_StepYawAlongPath(this, 0x320, 0);
+    EnInvadepoh_Alien_EoWeave(this);
     Actor_PlaySfx_Flagged(&this->actor, NA_SE_EN_FOLLOWERS_BEAM_PRE - SFX_FLAG);
 
     if (this->pathProgress >= 0.9999f) {
@@ -2654,6 +2888,10 @@ void EnInvadepoh_Alien_FloatForward(EnInvadepoh* this, PlayState* play) {
     EnInvadepoh_Alien_PathComputeProgress(this);
     EnInvadepoh_Alien_PathUpdate(this, play);
     EnInvadepoh_Alien_StepYawAlongPath(this, 0x320, 0);
+    EnInvadepoh_Alien_EoWeave(this);
+    if (!EnInvadepoh_Alien_EoBlink(this)) {
+        EnInvadepoh_Alien_EoShoot(this, play);
+    }
     Actor_PlaySfx_Flagged(&this->actor, NA_SE_EN_FOLLOWERS_BEAM_PRE - SFX_FLAG);
 
     if (this->pathProgress >= 0.9999f) {
@@ -2675,6 +2913,8 @@ void EnInvadepoh_Alien_SetupDamaged(EnInvadepoh* this) {
     this->timer = 8;
     this->frameCounter = 0;
     this->actor.flags |= ACTOR_FLAG_MINIMAP_ICON_ENABLED;
+    this->eoBlinkTimer = 0;
+    this->eoHurtTimer = 0;
     this->actionFunc = EnInvadepoh_Alien_Damaged;
 }
 
@@ -2740,6 +2980,9 @@ void EnInvadepoh_Alien_Dead(EnInvadepoh* this, PlayState* play) {
             this->shouldDraw = true;
             this->eyeBeamAlpha = 255;
             Math_Vec3f_Copy(&this->actor.scale, scale);
+            if (this->eoLeader) {
+                Math_Vec3f_Scale(&this->actor.scale, EO_THEM_LEADER_SCALE);
+            }
         } else {
             this->shouldDraw = false;
             this->eyeBeamAlpha = 0;
@@ -2778,6 +3021,10 @@ void EnInvadepoh_Alien_Dead(EnInvadepoh* this, PlayState* play) {
         EnInvadepoh_Alien_SetRespawnTime(EN_INVADEPOH_GET_INDEX(&this->actor));
         EnInvadepoh_Alien_AddKill();
         Item_DropCollectible(play, &this->actor.world.pos, ITEM00_ARROWS_30);
+        if (this->eoLeader) {
+            Item_DropCollectible(play, &this->actor.world.pos, ITEM00_RUPEE_RED);
+            this->eoLeader = false;
+        }
         EnInvadepoh_Alien_SetupWaitToRespawn(this);
     }
 }
@@ -2803,6 +3050,7 @@ void EnInvadepoh_Alien_WaitForObject(Actor* thisx, PlayState* play2) {
         if ((sInvasionState == INVASION_STATE_WAIT) || (CURRENT_TIME < CLOCK_TIME(2, 31))) {
             EnInvadepoh_Alien_SetupWaitForInvasion(this);
         } else if (sInvasionState == INVASION_STATE_ACTIVE) {
+            EnInvadepoh_Alien_EoRoll(this);
             if (this->pathProgress >= 0.0001f) {
                 EnInvadepoh_Alien_SetupFloatForward(this);
             } else {
@@ -2831,7 +3079,7 @@ void EnInvadepoh_Alien_Update(Actor* thisx, PlayState* play2) {
             Actor_Kill(thisx);
             return;
         }
-    } else if (this->collider.base.acFlags & AC_HIT) {
+    } else if ((this->collider.base.acFlags & AC_HIT) && !EnInvadepoh_Alien_EoShrugOffHit(this)) {
         Actor* ac = this->collider.base.ac;
 
         thisx->speed = ac->speed * 0.5f;
@@ -2848,6 +3096,16 @@ void EnInvadepoh_Alien_Update(Actor* thisx, PlayState* play2) {
     }
 
     this->actionFunc(this, play);
+
+    // A leader that just shrugged off an arrow can't be hit again by the same volley
+    if (this->eoHurtTimer > 0) {
+        this->eoHurtTimer--;
+        this->collider.base.acFlags &= ~AC_ON;
+        if ((this->eoHurtTimer == 0) && (this->actionFunc == EnInvadepoh_Alien_FloatForward) &&
+            (this->eoBlinkTimer == 0)) {
+            this->collider.base.acFlags |= AC_ON;
+        }
+    }
 
     if (thisx->draw != NULL) {
         this->isAnimFinished = SkelAnime_Update(&this->skelAnime);
@@ -3471,6 +3729,7 @@ void EnInvadepoh_Ufo_SetupHoverAboveBarn(EnInvadepoh* this) {
     this->ufoPulseScaleSpeed = 0.01f;
     this->ufoPulsePhaseVelocity = 0xBB8;
     this->actor.velocity.y *= 0.8f;
+    this->eoUfoTimer = 300;
     this->actionFunc = EnInvadepoh_Ufo_HoverAboveBarn;
 }
 
@@ -3498,6 +3757,7 @@ void EnInvadepoh_Ufo_HoverAboveBarn(EnInvadepoh* this, PlayState* play) {
     this->actor.velocity.y *= 0.97f;
 
     Actor_MoveWithGravity(&this->actor);
+    EnInvadepoh_Ufo_EoAttack(this, play);
 
     if (sInvasionState == INVASION_STATE_SUCCESS) {
         EnInvadepoh_Ufo_SetupOutroDescend(this);

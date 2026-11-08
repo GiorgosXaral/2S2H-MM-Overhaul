@@ -78,6 +78,8 @@ typedef struct EnPoSisters {
     /* 0x2FC */ LightInfo lightInfo;
     /* 0x30C */ ColliderCylinder collider;
     /* 0x358 */ MtxF mtxf;
-} EnPoSisters; // size = 0x398
+    // Enemy Overhaul
+    s16 eoTimer;
+} EnPoSisters; // size = 0x398 (vanilla)
 
 #endif // Z_EN_PO_SISTERS_H

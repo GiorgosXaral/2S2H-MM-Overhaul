@@ -10,6 +10,7 @@
 #include "overlays/actors/ovl_En_Bigpamet/z_en_bigpamet.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "overlays/effects/ovl_Effect_Ss_Hahen/z_eff_ss_hahen.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -186,6 +187,7 @@ void EnPametfrog_Init(Actor* thisx, PlayState* play) {
     Actor_ProcessInitChain(&this->actor, sInitChain);
     ActorShape_Init(&this->actor.shape, 0.0f, ActorShadow_DrawCircle, 55.0f);
     CollisionCheck_SetInfo(&this->actor.colChkInfo, &sDamageTable, &sColChkInit);
+    this->actor.colChkInfo.health = EO_HP2(this->actor.colChkInfo.health); // Miniboss Overhaul: 3 -> 6
     SkelAnime_InitFlex(play, &this->skelAnime, &gGekkoSkel, &gGekkoBoxingStanceAnim, this->jointTable, this->morphTable,
                        GEKKO_LIMB_MAX);
     Collider_InitAndSetJntSph(play, &this->collider, &this->actor, &sJntSphInit, this->colElement);
@@ -691,6 +693,22 @@ void EnPametfrog_WallPause(EnPametfrog* this, PlayState* play) {
             Actor_PlaySfx(&this->actor, NA_SE_EN_FROG_REAL);
         }
 
+        // Miniboss Overhaul: every pause on the wall, Gekko lobs mud at Link (two globs once badly hurt)
+        if ((this->timer == 8) && EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+            Player* player = GET_PLAYER(play);
+            Vec3f from = this->actor.focus.pos;
+            Vec3f to = player->actor.world.pos;
+            s32 count = EO_AT_OR_BELOW(this->actor.colChkInfo.health, EO_HP2(6), 1, 2) ? 2 : 1;
+            s32 i;
+
+            for (i = 0; i < count; i++) {
+                to.x = player->actor.world.pos.x + ((count == 1) ? 0.0f : Rand_CenteredFloat(120.0f));
+                to.z = player->actor.world.pos.z + ((count == 1) ? 0.0f : Rand_CenteredFloat(120.0f));
+                EoShot_OrbLob(play, &this->actor, BO_ORB_MUD, &from, &to, 30.0f + (i * 6.0f));
+            }
+            Actor_PlaySfx(&this->actor, NA_SE_EN_FROG_PUNCH1);
+        }
+
         if (this->timer == 0) {
             EnPametfrog_SetupWallCrawl(this);
         }
@@ -1174,7 +1192,7 @@ void EnPametfrog_SetupCallSnapper(EnPametfrog* this, PlayState* play) {
     Animation_MorphToPlayOnce(&this->skelAnime, &gGekkoCallAnim, 3.0f);
     Actor_PlaySfx(&this->actor, NA_SE_EN_FROG_GREET);
     this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
-    this->actor.colChkInfo.health = 6;
+    this->actor.colChkInfo.health = EO_HP2(6); // Miniboss Overhaul: 6 -> 12 for the Snapper phase
     this->actor.world.rot.y = Actor_WorldYawTowardPoint(&this->actor, &this->actor.home.pos);
     yawDiff = this->actor.yawTowardsPlayer - this->actor.world.rot.y;
     if (yawDiff > 0) {

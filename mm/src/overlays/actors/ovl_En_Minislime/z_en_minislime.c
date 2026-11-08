@@ -5,6 +5,7 @@
  */
 
 #include "z_en_minislime.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Bigslime/z_en_bigslime.h"
 
 #define FLAGS                                                                                 \
@@ -439,7 +440,8 @@ void EnMinislime_Idle(EnMinislime* this, PlayState* play) {
 
     if (this->actor.params == MINISLIME_SETUP_GEKKO_THROW) {
         EnMinislime_SetupMoveToGekko(this);
-    } else if (this->actor.xzDistToPlayer < 150.0f) {
+    } else if (this->actor.xzDistToPlayer < (EO_MB_ATTACKS_ON() ? 280.0f : 150.0f)) {
+        // Miniboss Overhaul: mini jellies leap at Link from further away
         EnMinislime_SetupBounce(this);
     }
 }
@@ -460,7 +462,9 @@ void EnMinislime_Bounce(EnMinislime* this, PlayState* play) {
             if (this->bounceTimer == 0) {
                 this->actor.gravity = -2.0f;
                 this->actor.world.rot.y = this->actor.yawTowardsPlayer;
-                this->actor.speed = 1.0f;
+                // Miniboss Overhaul: a real leap at Link instead of a hop on the spot
+                this->actor.speed =
+                    EO_MB_ATTACKS_ON() ? CLAMP(this->actor.xzDistToPlayer / 24.0f, 1.0f, 7.0f) : 1.0f;
                 this->actor.velocity.y = 12.0f;
                 this->actor.shape.rot.y = this->actor.world.rot.y;
             }

@@ -5,6 +5,8 @@
  */
 
 #include "z_en_bsb.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
+#include "overlays/actors/ovl_En_Skb/z_en_skb.h"
 #include "z64rumble.h"
 #include "z64shrink_window.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
@@ -375,7 +377,7 @@ void EnBsb_Init(Actor* thisx, PlayState* play) {
     this->pathIndex = ENBSB_GET_PATH_INDEX(&this->actor);
     this->switchFlag1 = ENBSB_GET_SWITCH_FLAG1(&this->actor);
     this->switchFlag2 = ENBSB_GET_SWITCH_FLAG2(&this->actor);
-    this->actor.colChkInfo.health = 24;
+    this->actor.colChkInfo.health = EO_HP2(24); // Miniboss Overhaul: 24 -> 48
     this->actor.hintId = TATL_HINT_ID_CAPTAIN_KEETA;
     this->actor.gravity = -2.0f;
 
@@ -810,6 +812,42 @@ void func_80C0C8EC(EnBsb* this, PlayState* play) {
     }
 }
 
+/**
+ * Miniboss Overhaul: Keeta's leaping slam sends a shockwave across the ground and raises two of his Stalchildren
+ * beside Link (no more than four at a time; they crumble when Keeta falls).
+ */
+void EnBsb_EoSlamExtras(EnBsb* this, PlayState* play) {
+    static s16 sSideYaws[] = { 0x4000, -0x4000 };
+    Player* player = GET_PLAYER(play);
+    Vec3f pos;
+    s32 i;
+
+    if (!EO_MB_ATTACKS_ON() || !Eo_CanAttack(play)) {
+        return;
+    }
+
+    pos = this->actor.world.pos;
+    pos.y = this->actor.floorHeight;
+    EoShot_Ring(play, &this->actor, EO_LOOK_DUST, &pos, 650.0f, 12.0f, 0x10);
+
+    for (i = 0; i < ARRAY_COUNT(sSideYaws); i++) {
+        f32 floorY;
+        s16 yaw = player->actor.shape.rot.y + sSideYaws[i];
+
+        if (EoSummon_Count(&this->actor) >= 4) {
+            break;
+        }
+
+        pos.x = player->actor.world.pos.x + (Math_SinS(yaw) * 130.0f);
+        pos.y = player->actor.world.pos.y;
+        pos.z = player->actor.world.pos.z + (Math_CosS(yaw) * 130.0f);
+        if (Eo_FindFloor(play, &pos, 120.0f, &floorY)) {
+            pos.y = floorY;
+            EoSummon_Spawn(play, &this->actor, ACTOR_EN_SKB, &pos, yaw + 0x8000, ENSKB_PARAM_0);
+        }
+    }
+}
+
 void func_80C0CA28(EnBsb* this, PlayState* play) {
     this->unk_02A4 = 0;
     this->actor.speed = 0.0f;
@@ -854,6 +892,7 @@ void func_80C0CB3C(EnBsb* this, PlayState* play) {
                                  2000, 100, true);
         Actor_RequestQuakeAndRumble(&this->actor, play, 10, 10);
         Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_ATTACK);
+        EnBsb_EoSlamExtras(this, play);
         func_80C0CCCC(this);
     }
 }
@@ -881,6 +920,7 @@ void func_80C0CD90(EnBsb* this) {
     this->actor.speed = 0.0f;
     Actor_PlaySfx(&this->actor, NA_SE_EN_KITA_ATTACK_W);
     EnBsb_ChangeAnim(this, ENBSB_ANIM_5);
+    this->eoSwingWave = false;
     this->unk_02B4 = 6;
     this->actionFunc = func_80C0CDE4;
 }
@@ -903,6 +943,18 @@ void func_80C0CDE4(EnBsb* this, PlayState* play) {
     dz = hitPos.z - player->actor.world.pos.z;
 
     dist = sqrtf((SQ(dx) + SQ(dy)) + SQ(dz));
+
+    // Miniboss Overhaul: the sword blow rips a shockwave through the ground towards Link
+    if (!this->eoSwingWave && (curFrame >= (this->animEndFrame * 0.4f)) && EO_MB_ATTACKS_ON() &&
+        Eo_CanAttack(play)) {
+        Vec3f wavePos = this->actor.world.pos;
+
+        this->eoSwingWave = true;
+        wavePos.x += Math_SinS(this->actor.shape.rot.y) * 60.0f;
+        wavePos.z += Math_CosS(this->actor.shape.rot.y) * 60.0f;
+        wavePos.y = this->actor.floorHeight;
+        EoShot_GroundWaveFan(play, &this->actor, EO_LOOK_DUST, &wavePos, 3, 0x1000, 14.0f, 45, 0x10);
+    }
 
     if ((this->collider.base.atFlags & AT_BOUNCED) ||
         ((player->stateFlags1 & PLAYER_STATE1_400000) && (dist <= 70.0f) &&
@@ -974,7 +1026,7 @@ void func_80C0D10C(EnBsb* this, PlayState* play) {
     func_80C0B31C(play, this, &this->unk_02F8);
 
     if (curFrame >= this->animEndFrame) {
-        if ((this->actor.world.pos.z > -1300.0f) || (this->actor.colChkInfo.health < 10)) {
+        if ((this->actor.world.pos.z > -1300.0f) || (this->actor.colChkInfo.health < EO_HP2(10))) {
             func_80C0CA28(this, play);
         } else {
             func_80C0C86C(this);
@@ -1527,6 +1579,7 @@ void func_80C0E618(EnBsb* this, PlayState* play) {
             Actor_ApplyDamage(&this->actor);
             if (this->actor.colChkInfo.health <= 0) {
                 Enemy_StartFinishingBlow(play, &this->actor);
+                EoSummon_KillAll(&this->actor, play); // Miniboss Overhaul: his Stalchildren fall with him
                 Actor_PlaySfx(&this->actor, NA_SE_EN_KITA_DEAD);
                 this->actor.flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
                 this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;

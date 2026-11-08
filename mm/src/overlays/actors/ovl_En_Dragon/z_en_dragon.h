@@ -58,6 +58,19 @@ typedef struct EnDragon {
     /* 0x2D8 */ UNK_TYPE1 unk_2D8[0x4];
     /* 0x2DC */ ColliderJntSph collider;
     /* 0x2FC */ ColliderJntSphElement colliderElements[8];
-} EnDragon; // size = 0x4FC
+    // Deep Python Overhaul
+    s16 eoSpitTimer;
+    s16 eoSnapTimer;
+    s16 eoSnapCooldown;
+    s16 eoSwimTimer;
+    s16 eoSwimAngle;
+    s16 eoWave;
+    u8 eoMode; // EnDragonEoMode
+    u8 eoWasFree;
+    u8 eoIsLast;
+    u8 eoMusic;
+    f32 eoSnapOffset;
+    Vec3f eoDenCenter;
+} EnDragon; // size = 0x4FC (vanilla)
 
 #endif // Z_EN_DRAGON_H

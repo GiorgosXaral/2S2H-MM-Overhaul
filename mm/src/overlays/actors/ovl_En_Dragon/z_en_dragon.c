@@ -5,6 +5,7 @@
  */
 
 #include "z_en_dragon.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Ot/z_en_ot.h"
 
 #define FLAGS                                                                                 \
@@ -25,6 +26,26 @@ void EnDragon_Grab(EnDragon* this, PlayState* play);
 void EnDragon_SetupAttack(EnDragon* this);
 void EnDragon_Attack(EnDragon* this, PlayState* play);
 void EnDragon_Dead(EnDragon* this, PlayState* play);
+void EnDragon_EoSwim(EnDragon* this, PlayState* play);
+void EnDragon_TransformLimbDraw(PlayState* play, s32 limbIndex, Actor* thisx);
+
+/**
+ * Deep Python Overhaul (Enhancements > Difficulty Options > Miniboss & Enemy Overhaul > Deep Pythons)
+ *
+ * Every python: 8 health instead of 4, spits volleys of water at Link, and the last one alive becomes a miniboss
+ * (miniboss music, 12 health, bigger volleys). The seahorse still appears once all eight are beaten.
+ *
+ * "Free swimming" on: once out of its burrow, a python leaves it and swims loops in front of its den, spitting water
+ *   and lunging at Link, and heads home when hurt, when Link swims away, or after a while. Its tail is tapered and its
+ *   body ripples as it swims. Grabs still drag Link back to the den for the vanilla bite.
+ * "Free swimming" off (burrow hunters): pythons stay in their burrows but snap forward to bite Link without having to
+ *   grab him first.
+ */
+typedef enum EnDragonEoMode {
+    /* 0 */ EN_DRAGON_EO_NONE,
+    /* 1 */ EN_DRAGON_EO_SWIM,
+    /* 2 */ EN_DRAGON_EO_RETURN
+} EnDragonEoMode;
 
 typedef enum {
     /* 0 */ DEEP_PYTHON_EXTEND_STATE_NOT_FULLY_EXTENDED,
@@ -208,7 +229,7 @@ void EnDragon_Init(Actor* thisx, PlayState* play) {
     SkelAnime_InitFlex(play, &this->skelAnime, &gDeepPythonSkel, &gDeepPythonSmallSideSwayAnim, this->jointTable,
                        this->morphTable, DEEP_PYTHON_LIMB_MAX);
 
-    this->actor.colChkInfo.health = 4;
+    this->actor.colChkInfo.health = EO_PYTHON_ON() ? 8 : 4; // Deep Python Overhaul: 4 -> 8
     this->actor.colChkInfo.damageTable = &sDamageTable;
     this->actor.attentionRangeType = ATTENTION_RANGE_10;
     Collider_InitAndSetJntSph(play, &this->collider, &this->actor, &sJntSphInit, this->colliderElements);
@@ -373,7 +394,195 @@ void EnDragon_SetupExtend(EnDragon* this) {
     this->behindJawRetreatTimer = this->state;
     Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_APPEAR_TRG);
     this->retreatTimer = 250;
+    this->eoSnapOffset = 0.0f;
+    this->eoSnapTimer = 0;
+    this->eoSpitTimer = 60;
+
+    // Deep Python Overhaul: the last python left awakens as a miniboss
+    if (EO_PYTHON_ON() && !this->eoIsLast && (sNumPythonsDead >= (BREG(39) + 7))) {
+        this->eoIsLast = true;
+        this->actor.colChkInfo.health = 12;
+        this->scale = 0.6f;
+    }
+    if (this->eoIsLast && !this->eoMusic) {
+        this->eoMusic = true;
+        Audio_PlayBgm_StorePrevBgm(NA_BGM_MINI_BOSS);
+    }
+
     this->actionFunc = EnDragon_Extend;
+}
+
+/**
+ * Deep Python Overhaul: a volley of water from the jaws (five shots for the last python).
+ */
+void EnDragon_EoSpit(EnDragon* this, PlayState* play) {
+    EoShot_OrbFan(play, &this->actor, BO_ORB_WATER, &this->jawPos, 16.0f, this->eoIsLast ? 5 : 3, 0x1000);
+    Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_BITE);
+}
+
+/**
+ * Deep Python Overhaul, burrow hunters: from its burrow, the python snaps forward to bite whoever is in front of it.
+ */
+void EnDragon_EoBurrowAttacks(EnDragon* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f extendedPos;
+    f32 distToJaw = Math_Vec3f_DistXYZ(&this->jawPos, &player->actor.world.pos);
+    s16 yawToPlayer = ABS_ALT(BINANG_SUB(Math_Vec3f_Yaw(&this->jawPos, &player->actor.world.pos),
+                                         this->actor.shape.rot.y));
+
+    if (!EO_PYTHON_ON() || !Eo_CanAttack(play)) {
+        return;
+    }
+
+    if (this->eoSpitTimer > 0) {
+        this->eoSpitTimer--;
+    } else if ((yawToPlayer < 0x4000) && (distToJaw < 900.0f) && (this->eoSnapTimer == 0)) {
+        EnDragon_EoSpit(this, play);
+        this->eoSpitTimer = this->eoIsLast ? 80 : 110;
+    }
+
+    if (this->eoSnapCooldown > 0) {
+        this->eoSnapCooldown--;
+    }
+
+    if ((this->eoSnapTimer == 0) && (this->eoSnapCooldown == 0) && (yawToPlayer < 0x3000) && (distToJaw < 380.0f)) {
+        this->eoSnapTimer = 20;
+        this->eoSnapCooldown = 70;
+        this->jawZRotation = 0x1400;
+        Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_APPEAR_TRG);
+    }
+
+    if (this->eoSnapTimer > 0) {
+        this->eoSnapTimer--;
+        // 8 frames out, then 12 back
+        if (this->eoSnapTimer >= 12) {
+            Math_ApproachF(&this->eoSnapOffset, 220.0f, 0.5f, 45.0f);
+        } else {
+            Math_ApproachF(&this->eoSnapOffset, 0.0f, 0.3f, 25.0f);
+            this->jawZRotation = 0;
+        }
+
+        if ((this->eoSnapTimer >= 10) && (distToJaw < 110.0f)) {
+            Eo_HurtPlayer(play, &this->actor, 0x10, this->actor.shape.rot.y, 8.0f, false, false);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_BITE);
+        }
+
+        Math_Vec3f_Copy(&extendedPos, &this->burrowEntrancePos);
+        extendedPos.x += Math_SinS(this->actor.world.rot.y) * (-530.0f + this->eoSnapOffset);
+        extendedPos.z += Math_CosS(this->actor.world.rot.y) * (-530.0f + this->eoSnapOffset);
+        this->actor.world.pos.x = extendedPos.x;
+        this->actor.world.pos.z = extendedPos.z;
+    }
+}
+
+/**
+ * Deep Python Overhaul, free swimming: loops in front of its den, spitting water and lunging at Link.
+ */
+void EnDragon_EoSetupSwim(EnDragon* this) {
+    this->eoMode = EN_DRAGON_EO_SWIM;
+    this->eoWasFree = true;
+    this->eoSwimTimer = this->eoIsLast ? 900 : 600;
+    this->eoSwimAngle = this->actor.home.rot.y;
+    this->eoSpitTimer = 50;
+    this->eoSnapTimer = 0;
+    this->eoSnapCooldown = 90;
+    this->eoDenCenter = this->burrowEntrancePos;
+    this->eoDenCenter.x += Math_SinS(this->actor.home.rot.y) * 450.0f;
+    this->eoDenCenter.z += Math_CosS(this->actor.home.rot.y) * 450.0f;
+    if (this->animIndex != DEEP_PYTHON_ANIM_LARGE_SIDE_SWAY) {
+        EnDragon_ChangeAnim(this, DEEP_PYTHON_ANIM_LARGE_SIDE_SWAY);
+    }
+    this->actionFunc = EnDragon_EoSwim;
+}
+
+void EnDragon_EoSwim(EnDragon* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f target;
+    s16 turn;
+
+    SkelAnime_Update(&this->skelAnime);
+    this->eoWave += 0x700;
+    if ((this->eoWave & 0x1FFF) < 0x700) {
+        EnDragon_SpawnBubbles(this, play, this->jawPos);
+    }
+
+    if (this->eoMode == EN_DRAGON_EO_RETURN) {
+        Vec3f extendedPos;
+
+        Math_Vec3f_Copy(&extendedPos, &this->burrowEntrancePos);
+        extendedPos.x += Math_SinS(this->actor.home.rot.y) * -530.0f;
+        extendedPos.z += Math_CosS(this->actor.home.rot.y) * -530.0f;
+        this->actor.speed = 0.0f;
+        Math_ScaledStepToS(&this->actor.world.rot.y, this->actor.home.rot.y, 0x300);
+        Math_ApproachF(&this->actor.world.pos.x, extendedPos.x, 0.2f, 30.0f);
+        Math_ApproachF(&this->actor.world.pos.y, extendedPos.y, 0.2f, 30.0f);
+        Math_ApproachF(&this->actor.world.pos.z, extendedPos.z, 0.2f, 30.0f);
+
+        if ((Math_Vec3f_DistXYZ(&this->actor.world.pos, &extendedPos) < 30.0f) &&
+            (ABS_ALT(BINANG_SUB(this->actor.world.rot.y, this->actor.home.rot.y)) < 0x300)) {
+            this->actor.world.pos = extendedPos;
+            this->actor.world.rot.y = this->actor.home.rot.y;
+            this->eoMode = EN_DRAGON_EO_NONE;
+            this->action = DEEP_PYTHON_ACTION_RETREAT;
+            Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_BACK);
+            EnDragon_SetupRetreatOrIdle(this);
+        }
+        return;
+    }
+
+    // Home when hurt, when Link swims off, or after a while
+    if (this->eoSwimTimer > 0) {
+        this->eoSwimTimer--;
+    }
+    if ((this->action >= DEEP_PYTHON_ACTION_DAMAGE) || (this->eoSwimTimer == 0) || !EO_PYTHON_FREE_ON() ||
+        (Math_Vec3f_DistXYZ(&player->actor.world.pos, &this->eoDenCenter) > 1400.0f)) {
+        this->eoMode = EN_DRAGON_EO_RETURN;
+        return;
+    }
+
+    if (this->eoSnapTimer > 0) {
+        // Lunge at Link
+        this->eoSnapTimer--;
+        target = player->actor.focus.pos;
+        turn = 0x480;
+        Math_ApproachF(&this->actor.speed, 20.0f, 1.0f, 3.0f);
+        this->jawZRotation = (this->eoSnapTimer > 8) ? 0x1400 : 0;
+        if ((this->eoSnapTimer > 6) && (Math_Vec3f_DistXYZ(&this->jawPos, &player->actor.world.pos) < 110.0f)) {
+            Eo_HurtPlayer(play, &this->actor, 0x10, this->actor.world.rot.y, 8.0f, false, false);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_BITE);
+            this->eoSnapTimer = MIN(this->eoSnapTimer, 6);
+        }
+    } else {
+        // Loop in front of the den
+        this->eoSwimAngle += this->eoIsLast ? 0x160 : 0x110;
+        target.x = this->eoDenCenter.x + (Math_SinS(this->eoSwimAngle) * 380.0f);
+        target.y = this->eoDenCenter.y + (Math_SinS(this->eoSwimAngle * 2) * 110.0f);
+        target.z = this->eoDenCenter.z + (Math_CosS(this->eoSwimAngle) * 380.0f);
+        turn = 0x220;
+        Math_ApproachF(&this->actor.speed, this->eoIsLast ? 10.0f : 8.0f, 1.0f, 0.5f);
+        this->jawZRotation = 0;
+
+        if (this->eoSpitTimer > 0) {
+            this->eoSpitTimer--;
+        } else if (Eo_CanAttack(play) && (Math_Vec3f_DistXYZ(&this->jawPos, &player->actor.world.pos) < 1100.0f)) {
+            if (Rand_ZeroOne() < 0.5f) {
+                EnDragon_EoSpit(this, play);
+            } else {
+                this->eoSnapTimer = 30;
+                Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_APPEAR_TRG);
+            }
+            this->eoSpitTimer = this->eoIsLast ? 90 : 130;
+        }
+    }
+
+    // Never stray far from the den
+    if (Math_Vec3f_DistXYZ(&this->jawPos, &this->eoDenCenter) > 800.0f) {
+        target = this->eoDenCenter;
+        turn = 0x400;
+    }
+
+    Math_ScaledStepToS(&this->actor.world.rot.y, Math_Vec3f_Yaw(&this->jawPos, &target), turn);
+    Math_ApproachF(&this->actor.world.pos.y, this->actor.world.pos.y + (target.y - this->jawPos.y), 0.08f, 6.0f);
 }
 
 void EnDragon_Extend(EnDragon* this, PlayState* play) {
@@ -418,12 +627,19 @@ void EnDragon_Extend(EnDragon* this, PlayState* play) {
         Math_SmoothStepToS(&this->jawZRotation, 0, 5, 0xBB8, 0x14);
         SkelAnime_Update(&this->skelAnime);
         if (this->state == DEEP_PYTHON_EXTEND_STATE_FULLY_EXTENDED) {
+            if (EO_PYTHON_FREE_ON()) {
+                // Deep Python Overhaul: out of the burrow and into open water
+                EnDragon_EoSetupSwim(this);
+                return;
+            }
             if (curFrame < this->animEndFrame) {
                 return;
             }
 
             this->state = DEEP_PYTHON_EXTEND_STATE_REPEAT_LARGE_SWAY;
         }
+
+        EnDragon_EoBurrowAttacks(this, play);
 
         yaw = ABS_ALT(BINANG_SUB(Math_Vec3f_Yaw(&this->jawPos, &player->actor.world.pos), this->actor.shape.rot.y));
         if (yaw < 0x5000) {
@@ -662,6 +878,16 @@ void EnDragon_Dead(EnDragon* this, PlayState* play) {
     this->jawZRotation = 0xFA0;
     EnDragon_SpawnBubbles(this, play, this->jawPos);
 
+    // Deep Python Overhaul: a python that died in open water sinks back to its den first
+    if (this->eoWasFree && (Math_Vec3f_DistXYZ(&this->actor.world.pos, &this->actor.home.pos) > 30.0f)) {
+        this->actor.speed = 0.0f;
+        Math_ApproachF(&this->actor.world.pos.x, this->actor.home.pos.x, 0.25f, 120.0f);
+        Math_ApproachF(&this->actor.world.pos.y, this->actor.home.pos.y, 0.25f, 120.0f);
+        Math_ApproachF(&this->actor.world.pos.z, this->actor.home.pos.z, 0.25f, 120.0f);
+        this->timer = 0;
+        return;
+    }
+
     if ((this->timer != 0) && (fabsf(this->actor.world.pos.x - this->actor.home.pos.x) > 121.0f) &&
         (fabsf(this->actor.world.pos.z - this->actor.home.pos.z) > 121.0f)) {
         this->actor.speed = -120.0f;
@@ -751,6 +977,16 @@ void EnDragon_UpdateDamage(EnDragon* this, PlayState* play) {
                 this->action = DEEP_PYTHON_ACTION_DAMAGE;
             } else {
                 Enemy_StartFinishingBlow(play, &this->actor);
+                if (this->eoMode != EN_DRAGON_EO_NONE) {
+                    // Deep Python Overhaul: back on its den's axis for the vanilla death
+                    this->actor.world.rot.y = this->actor.home.rot.y;
+                    this->actor.speed = 0.0f;
+                    this->eoMode = EN_DRAGON_EO_NONE;
+                }
+                if (this->eoMusic) {
+                    this->eoMusic = false;
+                    Audio_RestorePrevBgm();
+                }
                 Actor_PlaySfx(&this->actor, NA_SE_EN_UTSUBO_DEAD);
                 this->actor.flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
                 this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
@@ -765,6 +1001,13 @@ void EnDragon_UpdateDamage(EnDragon* this, PlayState* play) {
         (player->invincibilityTimer == 0) && (this->collider.elements[0].base.ocElemFlags & OCELEM_HIT) &&
         !((Actor_GetPlayerImpact(play, 1000.0f, &this->actor.world.pos, &playerImpactType) >= 0.0f) &&
           (playerImpactType == PLAYER_IMPACT_ZORA_BARRIER))) {
+        if (this->eoMode != EN_DRAGON_EO_NONE) {
+            // Deep Python Overhaul: a grab in open water drags Link back to the den for the vanilla bite
+            this->actor.world.rot.y = this->actor.home.rot.y;
+            this->eoMode = EN_DRAGON_EO_NONE;
+        }
+        this->eoSnapTimer = 0;
+        this->eoSnapOffset = 0.0f;
         this->actor.speed = 0.0f;
         this->action = DEEP_PYTHON_ACTION_GRAB;
         this->actor.flags |= ACTOR_FLAG_FREEZE_EXCEPTION;
@@ -820,6 +1063,12 @@ s32 EnDragon_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f
         rot->z += this->jawZRotation;
     }
 
+    // Deep Python Overhaul: the body ripples while it swims in open water
+    if ((this->eoMode == EN_DRAGON_EO_SWIM) && (limbIndex >= DEEP_PYTHON_LIMB_BODY_SEGMENT_4) &&
+        (limbIndex <= DEEP_PYTHON_LIMB_BODY_SEGMENT_1)) {
+        rot->y += (s16)(Math_SinS(this->eoWave + (limbIndex * 0x2400)) * 0x500);
+    }
+
     return false;
 }
 
@@ -842,13 +1091,38 @@ void EnDragon_PostLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3s* r
     Collider_UpdateSpheres(limbIndex, &this->collider);
 }
 
+/**
+ * Deep Python Overhaul: the model was made to stay half inside a burrow, so for free swimming the last body segments
+ * are tapered into a tail.
+ */
+void EnDragon_TransformLimbDraw(PlayState* play, s32 limbIndex, Actor* thisx) {
+    if (!EO_PYTHON_FREE_ON()) {
+        return;
+    }
+
+    switch (limbIndex) {
+        case DEEP_PYTHON_LIMB_BODY_SEGMENT_5:
+            Matrix_Scale(0.9f, 0.85f, 0.85f, MTXMODE_APPLY);
+            break;
+        case DEEP_PYTHON_LIMB_BODY_SEGMENT_6:
+            Matrix_Scale(0.9f, 0.7f, 0.7f, MTXMODE_APPLY);
+            break;
+        case DEEP_PYTHON_LIMB_BODY_SEGMENT_7:
+            Matrix_Scale(0.85f, 0.45f, 0.45f, MTXMODE_APPLY);
+            break;
+        default:
+            break;
+    }
+}
+
 void EnDragon_Draw(Actor* thisx, PlayState* play) {
     EnDragon* this = (EnDragon*)thisx;
 
     Gfx_SetupDL25_Opa(play->state.gfxCtx);
     Gfx_SetupDL25_Xlu(play->state.gfxCtx);
-    SkelAnime_DrawFlexOpa(play, this->skelAnime.skeleton, this->skelAnime.jointTable, this->skelAnime.dListCount,
-                          EnDragon_OverrideLimbDraw, EnDragon_PostLimbDraw, &this->actor);
+    SkelAnime_DrawTransformFlexOpa(play, this->skelAnime.skeleton, this->skelAnime.jointTable,
+                                   this->skelAnime.dListCount, EnDragon_OverrideLimbDraw, EnDragon_PostLimbDraw,
+                                   EnDragon_TransformLimbDraw, &this->actor);
 }
 
 void EnDragon_Reset(void) {

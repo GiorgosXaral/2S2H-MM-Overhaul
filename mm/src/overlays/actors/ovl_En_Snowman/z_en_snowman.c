@@ -5,6 +5,7 @@
  */
 
 #include "z_en_snowman.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE)
@@ -550,6 +551,17 @@ void EnSnowman_ThrowSnowball(EnSnowman* this, PlayState* play) {
 
         Actor_Spawn(&play->actorCtx, play, ACTOR_EN_SNOWMAN, this->snowballPos.x, this->snowballPos.y,
                     this->snowballPos.z, 0, this->actor.yawTowardsPlayer, 0, params);
+
+        // Enemy Overhaul: Eenos throw spreads, two extra small snowballs to either side
+        if (EO_ENEMIES_ON() && Eo_CanAttack(play)) {
+            s32 i;
+
+            for (i = -1; i <= 1; i += 2) {
+                Actor_Spawn(&play->actorCtx, play, ACTOR_EN_SNOWMAN, this->snowballPos.x, this->snowballPos.y,
+                            this->snowballPos.z, 0, this->actor.yawTowardsPlayer + (i * 0x1400), 0,
+                            EN_SNOWMAN_TYPE_SMALL_SNOWBALL);
+            }
+        }
     }
 }
 
@@ -953,6 +965,15 @@ void EnSnowman_Combine(EnSnowman* this, PlayState* play) {
         } else if (this->fwork.targetScaleDuringCombine > 0.018f) {
             Actor_SetScale(&this->actor, 0.02f);
             this->actor.params = EN_SNOWMAN_TYPE_LARGE;
+
+            // Enemy Overhaul: reforming into a large Eeno slams a ring of snow across the ground
+            if (EO_ENEMIES_ON() && Eo_CanAttack(play)) {
+                Vec3f ringPos = this->actor.world.pos;
+
+                ringPos.y = this->actor.floorHeight;
+                EoShot_Ring(play, &this->actor, EO_LOOK_SNOW, &ringPos, 450.0f, 9.0f, 0x10);
+                Actor_PlaySfx(&this->actor, NA_SE_EN_YMAJIN_THROW);
+            }
             this->actor.flags |= ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER;
             this->collider.base.ocFlags1 |= OC1_ON;
             this->combineState = EN_SNOWMAN_COMBINE_STATE_BEING_ABSORBED_OR_DONE;

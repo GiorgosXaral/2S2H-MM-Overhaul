@@ -5,6 +5,8 @@
  */
 
 #include "z_en_jso2.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
+#include "overlays/actors/ovl_En_Jso/z_en_jso.h"
 #include "assets/objects/gameplay_keep/gameplay_keep.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "overlays/actors/ovl_En_Col_Man/z_en_col_man.h"
@@ -345,7 +347,7 @@ void EnJso2_Init(Actor* thisx, PlayState* play) {
     this->actor.hintId = TATL_HINT_ID_GARO_MASTER;
     this->actor.attentionRangeType = ATTENTION_RANGE_5;
     this->actor.colChkInfo.mass = 80;
-    this->actor.colChkInfo.health = 14;
+    this->actor.colChkInfo.health = EO_HP2(14); // Miniboss Overhaul: 14 -> 28
     ActorShape_Init(&this->actor.shape, 0.0f, ActorShadow_DrawCircle, 0.0f);
     this->actor.colChkInfo.damageTable = &sDamageTable;
     this->actor.shape.shadowScale = 0.0f;
@@ -1028,6 +1030,13 @@ void EnJso2_FallFromTeleport(EnJso2* this, PlayState* play) {
     Math_ApproachF(&this->actor.shape.shadowScale, 17.0f, 0.4f, 4.0f);
 
     if (this->actor.bgCheckFlags & BGCHECKFLAG_GROUND) {
+        // Miniboss Overhaul: landing from the teleport throws out a ring of fire
+        if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+            Vec3f ringPos = this->actor.world.pos;
+
+            ringPos.y = this->actor.floorHeight;
+            EoShot_Ring(play, &this->actor, EO_LOOK_FIRE, &ringPos, 420.0f, 9.0f, 0x10);
+        }
         this->isTeleporting = false;
         this->scale = 0.042f;
         this->actor.shape.shadowScale = 17.0f;
@@ -1043,6 +1052,17 @@ void EnJso2_SetupSlash(EnJso2* this, PlayState* play) {
     Math_ApproachZeroF(&this->actor.speed, 0.3f, 3.0f);
     this->slashHitSomething = false;
     Actor_PlaySfx(&this->actor, NA_SE_IT_SWORD_SWING_HARD);
+
+    // Miniboss Overhaul: the burning blades send fire racing along the floor (three once it is badly hurt)
+    if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+        Vec3f wavePos = this->actor.world.pos;
+
+        wavePos.y = this->actor.floorHeight;
+        EoShot_GroundWaveFan(play, &this->actor, EO_LOOK_FIRE, &wavePos,
+                             EO_AT_OR_BELOW(this->actor.colChkInfo.health, EO_HP2(14), 1, 2) ? 3 : 1, 0x1400, 13.0f,
+                             40, 0x10);
+    }
+
     this->action = EN_JSO2_ACTION_SLASH;
     this->bodyCollider.base.acFlags &= ~AC_HARD;
     this->actionFunc = EnJso2_Slash;
@@ -1275,6 +1295,7 @@ void EnJso2_JumpBack(EnJso2* this, PlayState* play) {
 }
 
 void EnJso2_SetupDead(EnJso2* this, PlayState* play) {
+    EoSummon_KillAll(&this->actor, play); // Miniboss Overhaul: its Garos vanish with it
     AudioSfx_SetChannelIO(&this->actor.projectedPos, NA_SE_EN_ANSATSUSYA_DASH_2, 0);
     EnJso2_ChangeAnim(this, EN_JSO2_ANIM_DAMAGED);
 
@@ -1493,6 +1514,14 @@ void EnJso2_BlowUp(EnJso2* this, PlayState* play) {
         if (this->bomb == NULL) {
             this->bomb = Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_EN_COL_MAN, this->bombPos.x,
                                             this->bombPos.y, this->bombPos.z, 0, 0, 0, EN_COL_MAN_GAMEPLAY_BOMB);
+
+            // Miniboss Overhaul: as the bomb comes out, a spray of embers warns Link to get clear
+            if (EO_MB_ATTACKS_ON()) {
+                Vec3f emberPos = this->actor.world.pos;
+
+                emberPos.y += 40.0f;
+                EoShot_OrbRing(play, &this->actor, BO_ORB_EMBER, &emberPos, 9.0f, 12, (s16)Rand_Next());
+            }
         } else if (this->blowUpFrameCounter >= 10) {
             if (this->bomb != NULL) {
                 this->bomb->world.rot.z = 1;
@@ -1628,10 +1657,45 @@ void EnJso2_UpdateDamage(EnJso2* this, PlayState* play) {
     }
 }
 
+/**
+ * Miniboss Overhaul: at half health the Garo Master calls two Garos into the fight, one on either side of Link.
+ */
+void EnJso2_EoCallGaros(EnJso2* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    s32 i;
+
+    if (this->eoGarosCalled || !EO_MB_ATTACKS_ON() || !Eo_CanAttack(play) ||
+        (this->actor.colChkInfo.health <= 0) ||
+        !EO_AT_OR_BELOW(this->actor.colChkInfo.health, EO_HP2(14), 1, 2) ||
+        (this->action == EN_JSO2_ACTION_INTRO_CUTSCENE) || (this->action >= EN_JSO2_ACTION_DEAD)) {
+        return;
+    }
+
+    this->eoGarosCalled = true;
+    for (i = 0; i < 2; i++) {
+        s16 yaw = player->actor.shape.rot.y + ((i == 0) ? 0x4000 : -0x4000);
+        Vec3f pos;
+        f32 floorY;
+
+        pos.x = player->actor.world.pos.x + (Math_SinS(yaw) * 220.0f);
+        pos.y = player->actor.world.pos.y;
+        pos.z = player->actor.world.pos.z + (Math_CosS(yaw) * 220.0f);
+        if (!Eo_FindFloor(play, &pos, 150.0f, &floorY)) {
+            pos = this->actor.world.pos;
+        } else {
+            pos.y = floorY;
+        }
+        EoSummon_Spawn(play, &this->actor, ACTOR_EN_JSO, &pos, yaw + 0x8000, EN_JSO_PARAMS_SUMMONED);
+    }
+    Actor_PlaySfx(&this->actor, NA_SE_EN_ANSATSUSYA_JUMP);
+}
+
 void EnJso2_Update(Actor* thisx, PlayState* play) {
     EnJso2* this = (EnJso2*)thisx;
     s32 pad;
     s32 i;
+
+    EnJso2_EoCallGaros(this, play);
 
     if (this->action != EN_JSO2_ACTION_CIRCLE_PLAYER) {
         SkelAnime_Update(&this->skelAnime);

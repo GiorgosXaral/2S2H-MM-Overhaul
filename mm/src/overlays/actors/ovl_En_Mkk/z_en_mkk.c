@@ -5,6 +5,7 @@
  */
 
 #include "z_en_mkk.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "objects/object_mkk/object_mkk.h"
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE)
@@ -289,6 +290,14 @@ void func_80A4E58C(EnMkk* this) {
     this->unk_14B |= 1;
     this->actor.speed = 3.0f;
     this->actor.velocity.y = 5.0f;
+    // Enemy Overhaul: a White Boe's pounce sometimes carries a freezing chill; a Big Boe hits harder
+    this->collider.elem.atDmgInfo.effect =
+        (EO_ENEMIES_ON() && (this->actor.params == 1) && (Rand_ZeroOne() < 0.3f)) ? 2 : 0;
+    this->collider.elem.atDmgInfo.damage = this->eoBig ? 0x10 : 0x04;
+    if (this->eoBig) {
+        this->actor.velocity.y = 8.0f;
+        this->actor.speed = 5.0f;
+    }
     Actor_PlaySfx(&this->actor, NA_SE_EN_KUROSUKE_ATTACK);
     this->collider.base.atFlags |= AT_ON;
     Math_ScaledStepToS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 0x800);
@@ -391,11 +400,107 @@ void func_80A4E84C(EnMkk* this) {
 }
 
 void func_80A4EBBC(EnMkk* this, PlayState* play) {
+    // Enemy Overhaul: a Big Boe bursts back into small Boes, unless the blow was strong enough to finish all of them
+    if ((this->collider.base.acFlags & AC_HIT) && this->eoBig && (this->actor.colChkInfo.damage < 3)) {
+        s32 i;
+
+        this->collider.base.acFlags &= ~AC_HIT;
+        for (i = 0; i < this->eoAbsorbed; i++) {
+            s16 yaw = (s16)(i * (0x10000 / this->eoAbsorbed)) + (s16)Rand_Next();
+
+            Eo_SpawnAnyObject(play, ACTOR_EN_MKK, this->actor.world.pos.x + (Math_SinS(yaw) * 45.0f),
+                              this->actor.world.pos.y, this->actor.world.pos.z + (Math_CosS(yaw) * 45.0f), 0, yaw, 0,
+                              this->actor.params | 2);
+        }
+        Eo_Puff(play, &this->actor.world.pos, 1.5f);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_PO_DEAD);
+        this->eoBig = false;
+        this->eoAbsorbed = 0;
+        this->eoMergeTimer = 120;
+        Actor_SetScale(&this->actor, 0.01f);
+        this->collider.dim.modelSphere.radius = sSphereInit.dim.modelSphere.radius;
+        this->collider.dim.worldSphere.radius = sSphereInit.dim.modelSphere.radius;
+        this->actor.colChkInfo.health = 1;
+        return;
+    }
+
     if (this->collider.base.acFlags & AC_HIT) {
         this->collider.base.acFlags &= ~AC_HIT;
+        if (this->eoBig) {
+            // all of them at once: a bigger reward
+            Item_DropCollectibleRandom(play, &this->actor, &this->actor.world.pos, 0x60);
+        }
         Actor_SetDropFlag(&this->actor, &this->collider.elem);
         Enemy_StartFinishingBlow(play, &this->actor);
         func_80A4E67C(this);
+    }
+}
+
+/**
+ * Enemy Overhaul:
+ *  - when one Boe pounces, the others close to Link pounce with it
+ *  - four Boes of the same color that bunch up merge into a Big Boe (twice the size, harder hitting); striking it makes
+ *    it burst back into four Boes, unless the blow is strong enough to finish them all at once
+ */
+void EnMkk_EoUpdate(EnMkk* this, PlayState* play) {
+    Actor* other;
+    EnMkk* found[3];
+    s32 count = 0;
+
+    if (!EO_ENEMIES_ON() || (Player_GetMask(play) == PLAYER_MASK_STONE)) {
+        return;
+    }
+
+    // Pounce together
+    if ((this->actionFunc == func_80A4E60C) && (this->actor.velocity.y > 4.0f)) {
+        for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; other != NULL; other = other->next) {
+            EnMkk* boe = (EnMkk*)other;
+
+            if ((other != &this->actor) && (other->id == ACTOR_EN_MKK) && (other->update == EnMkk_Update) &&
+                (boe->actionFunc == func_80A4E2E8) && (boe->unk_149 == 0) && (other->xzDistToPlayer < 220.0f) &&
+                (other->bgCheckFlags & BGCHECKFLAG_GROUND) && (Actor_WorldDistXZToActor(other, &this->actor) < 250.0f)) {
+                boe->actor.shape.rot.y = boe->actor.yawTowardsPlayer;
+                func_80A4E58C(boe);
+            }
+        }
+    }
+
+    // Merge into a Big Boe
+    if (this->eoMergeTimer > 0) {
+        this->eoMergeTimer--;
+        return;
+    }
+    this->eoMergeTimer = 20;
+    if (this->eoBig || (this->alpha != 255) || (this->actionFunc != func_80A4E2E8)) {
+        return;
+    }
+
+    for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; (other != NULL) && (count < 3);
+         other = other->next) {
+        EnMkk* boe = (EnMkk*)other;
+
+        if ((other != &this->actor) && (other->id == ACTOR_EN_MKK) && (other->update == EnMkk_Update) &&
+            (other->params == this->actor.params) && !boe->eoBig && (boe->alpha == 255) &&
+            ((boe->actionFunc == func_80A4E2E8) || (boe->actionFunc == func_80A4E1F0)) &&
+            (Actor_WorldDistXZToActor(other, &this->actor) < 70.0f)) {
+            found[count++] = boe;
+        }
+    }
+
+    if (count == 3) {
+        s32 i;
+
+        for (i = 0; i < 3; i++) {
+            Eo_Puff(play, &found[i]->actor.world.pos, 0.8f);
+            Actor_Kill(&found[i]->actor);
+        }
+        this->eoBig = true;
+        this->eoAbsorbed = 3;
+        Actor_SetScale(&this->actor, 0.02f);
+        this->collider.dim.modelSphere.radius = sSphereInit.dim.modelSphere.radius * 2;
+        this->collider.dim.worldSphere.radius = sSphereInit.dim.modelSphere.radius * 2;
+        this->actor.colChkInfo.health = 3;
+        Actor_PlaySfx(&this->actor, NA_SE_EN_KUROSUKE_ATTACK);
     }
 }
 
@@ -403,6 +508,8 @@ void EnMkk_Update(Actor* thisx, PlayState* play) {
     s32 pad;
     Player* player;
     EnMkk* this = (EnMkk*)thisx;
+
+    EnMkk_EoUpdate(this, play);
 
     if (this->primColorSelect > 0) {
         this->primColorSelect--;

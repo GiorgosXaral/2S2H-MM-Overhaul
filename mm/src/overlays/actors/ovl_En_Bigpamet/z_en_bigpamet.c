@@ -5,6 +5,7 @@
  */
 
 #include "z_en_bigpamet.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64quake.h"
 #include "z64rumble.h"
 #include "overlays/actors/ovl_En_Pametfrog/z_en_pametfrog.h"
@@ -552,6 +553,14 @@ void func_80A287E8(EnBigpamet* this, PlayState* play) {
         Quake_SetDuration(quakeIndex, 10);
 
         Rumble_Request(this->actor.xyzDistToPlayerSq, 180, 20, 100);
+
+        // Miniboss Overhaul: slamming into the wall sends a shockwave across the floor (jump or sidehop over it)
+        if (EO_MB_ATTACKS_ON()) {
+            Vec3f ringPos = this->actor.world.pos;
+
+            ringPos.y = this->actor.floorHeight;
+            EoShot_Ring(play, &this->actor, EO_LOOK_DUST, &ringPos, 700.0f, 11.0f, 0x10);
+        }
 
         func_80A27B58(this);
         func_80A27DD8(this, play);

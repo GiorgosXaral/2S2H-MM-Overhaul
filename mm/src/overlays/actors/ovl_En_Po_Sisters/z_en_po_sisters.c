@@ -5,6 +5,7 @@
  */
 
 #include "z_en_po_sisters.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 
@@ -449,6 +450,15 @@ void EnPoSisters_SetupSpinAttack(EnPoSisters* this) {
     this->actor.world.rot.y = this->actor.yawTowardsPlayer;
     this->poSisterFlags |= POE_SISTERS_FLAG_MATCH_PLAYER_HEIGHT;
     this->actionFunc = EnPoSisters_SpinAttack;
+
+    // Enemy Overhaul: Meg and all of her clones hurl a ghost flame as they close in, all at once
+    if ((this->type == POE_SISTERS_TYPE_MEG) && EO_ENEMIES_ON() && (gPlayState != NULL) && Eo_CanAttack(gPlayState)) {
+        EoShot* flame = EoShot_OrbAimed(gPlayState, &this->actor, BO_ORB_CURSE, &this->actor.focus.pos, 7.0f, 0);
+
+        if (flame != NULL) {
+            flame->orb.life = flame->orb.maxLife = 80;
+        }
+    }
 }
 
 void EnPoSisters_SpinAttack(EnPoSisters* this, PlayState* play) {
@@ -458,6 +468,21 @@ void EnPoSisters_SpinAttack(EnPoSisters* this, PlayState* play) {
     }
 
     this->actor.shape.rot.y += (s32)(1152.0f * this->skelAnime.endFrame);
+
+    // Enemy Overhaul: Jo's lantern leaves a trail of fire behind her spin
+    if ((this->type == POE_SISTERS_TYPE_JO) && EO_ENEMIES_ON() && ((play->gameplayFrames % 4) == 0)) {
+        Vec3f emberPos = this->actor.world.pos;
+        Vec3f emberVel = { 0.0f, -1.0f, 0.0f };
+        EoShot* ember;
+
+        emberPos.y += 20.0f;
+        ember = EoShot_Orb(play, &this->actor, BO_ORB_FIRE, &emberPos, &emberVel);
+        if (ember != NULL) {
+            ember->orb.life = ember->orb.maxLife = 50;
+            ember->orb.drawScale = 2.5f;
+            ember->orb.drag = 0.9f;
+        }
+    }
 
     if (this->spinTimer == 0) {
         s16 rotY = this->actor.shape.rot.y - this->actor.world.rot.y;
@@ -616,6 +641,18 @@ void EnPoSisters_SetupSpinBackToVisible(EnPoSisters* this, PlayState* play) {
         this->actor.draw = EnPoSisters_Draw;
     } else {
         this->actor.world.rot.y = this->actor.shape.rot.y;
+    }
+
+    // Enemy Overhaul: Amy comes back right behind Link
+    if ((this->type == POE_SISTERS_TYPE_AMY) && EO_ENEMIES_ON()) {
+        Vec3f behind;
+
+        if (Eo_PosBehindPlayer(play, 140.0f, &behind)) {
+            this->actor.world.pos.x = behind.x;
+            this->actor.world.pos.z = behind.z;
+            this->actor.shape.rot.y = this->actor.world.rot.y =
+                Actor_WorldYawTowardPoint(&this->actor, &GET_PLAYER(play)->actor.world.pos);
+        }
     }
 
     this->spinInvisibleTimer = 15;
@@ -956,6 +993,20 @@ void EnPoSisters_Update(Actor* thisx, PlayState* play) {
     f32 alpha;
     Vec3f checkPos;
     s32 bgId;
+
+    // Enemy Overhaul: Beth throws freezing blue flames while she drifts in sight
+    if ((this->type == POE_SISTERS_TYPE_BETH) && EO_ENEMIES_ON()) {
+        if (this->eoTimer > 0) {
+            this->eoTimer--;
+        } else if ((this->color.a == 255) &&
+                   ((this->actionFunc == EnPoSisters_AimlessIdleFlying) ||
+                    (this->actionFunc == EnPoSisters_Investigating)) &&
+                   (this->actor.xzDistToPlayer < 550.0f) && Eo_CanAttack(play)) {
+            EoShot_OrbAimed(play, &this->actor, BO_ORB_ICE, &this->actor.focus.pos, 9.0f, 0);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_PO_LAUGH);
+            this->eoTimer = 110;
+        }
+    }
 
     if (this->collider.base.atFlags & AT_HIT) {
         this->collider.base.atFlags &= ~AT_HIT;

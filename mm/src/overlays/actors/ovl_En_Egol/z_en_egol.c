@@ -5,6 +5,7 @@
  */
 
 #include "z_en_egol.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "objects/object_eg/object_eg.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "overlays/actors/ovl_En_Arrow/z_en_arrow.h"
@@ -88,6 +89,25 @@ void EnEgol_Death(EnEgol* this, PlayState* play);
 void EnEgol_SpawnEffect(EnEgol* this, Vec3f* pos, Vec3s* rot, s16 lifetime, f32 scale, s16 type);
 void EnEgol_UpdateEffects(EnEgol* this, PlayState* play);
 void EnEgol_DrawEffects(EnEgol* this, PlayState* play);
+
+/**
+ * Eyegore Overhaul (Enhancements > Difficulty Options > Miniboss & Enemy Overhaul > Eyegore):
+ *  - twice the health (8 -> 16)
+ *  - the laser fires 5 shots instead of 3, and the body keeps turning towards Link between shots, so the blasts walk
+ *    onto him; once enraged it ends the barrage with a sweeping stream of light
+ *  - the slam sends a shockwave across the floor and shakes rubble loose from above Link
+ *  - enraged (half health or less): its eye glows red, it walks faster, it slams twice (turning to face Link for the
+ *    second one), and standing right behind it is no longer safe: it whirls around and slams
+ *  - while it charges the laser it can't close its eye: an arrow in the eye then staggers it (a new opening)
+ * The windows in which its eye can be hurt (after a slam, while stunned) are exactly as long as in vanilla.
+ */
+s32 EnEgol_EoEnraged(EnEgol* this) {
+    return EO_EYEGORE_ON() && EO_AT_OR_BELOW(this->actor.colChkInfo.health, EO_EYEGORE_HP(8), 1, 2);
+}
+
+s32 EnEgol_EoLaserShots(EnEgol* this) {
+    return EO_EYEGORE_ON() ? 5 : 3;
+}
 
 static ColliderJntSphElementInit sEyeJntSphElementsInit[1] = {
     {
@@ -444,7 +464,7 @@ void EnEgol_Init(Actor* thisx, PlayState* play) {
 
     this->actor.colChkInfo.mass = MASS_IMMOVABLE;
     this->actor.hintId = TATL_HINT_ID_EYEGORE;
-    this->actor.colChkInfo.health = 8;
+    this->actor.colChkInfo.health = EO_EYEGORE_HP(8); // Eyegore Overhaul: 8 -> 16
 
     SkelAnime_InitFlex(play, &this->skelAnime, &gEyegoreSkel, &gEyegoreStandAnim, this->jointTable, this->morphTable,
                        EYEGORE_LIMB_MAX);
@@ -577,18 +597,28 @@ void EnEgol_Walk(EnEgol* this, PlayState* play) {
     } else {
         s16 angleBehind;
 
+        f32 stride = EnEgol_EoEnraged(this) ? 5.0f : 4.0f; // Eyegore Overhaul: faster once enraged
+
+        this->skelAnime.playSpeed = EnEgol_EoEnraged(this) ? 1.25f : 1.0f;
         if (!((this->skelAnime.curFrame == 0.0f) ||
               ((9.0f <= this->skelAnime.curFrame) && (this->skelAnime.curFrame <= 15.0f)) ||
               ((24.0f <= this->skelAnime.curFrame) && (this->skelAnime.curFrame <= 29.0f)))) {
             Math_ApproachF(&this->actor.world.pos.x, this->waypointPos.x, 0.5f,
-                           fabsf(Math_SinS(this->actor.world.rot.y) * 4.0f));
+                           fabsf(Math_SinS(this->actor.world.rot.y) * stride));
             Math_ApproachF(&this->actor.world.pos.z, this->waypointPos.z, 0.5f,
-                           fabsf(Math_CosS(this->actor.world.rot.y) * 4.0f));
+                           fabsf(Math_CosS(this->actor.world.rot.y) * stride));
         }
         Math_SmoothStepToS(&this->actor.world.rot.y, Math_Vec3f_Yaw(&this->actor.world.pos, &this->waypointPos), 1,
                            0x7D0, 0);
         EnEgol_FootstepEffects(this, play, 9.0f, 24.0f);
         angleBehind = this->actor.world.rot.y - this->actor.yawTowardsPlayer + 0x8000;
+        if ((ABS_ALT(angleBehind) < 0x2000) && EnEgol_EoEnraged(this) && (this->actor.xzDistToPlayer < 140.0f)) {
+            // Eyegore Overhaul: it whirls around and slams whoever hides behind it
+            this->actor.world.rot.y = this->actor.shape.rot.y = this->actor.yawTowardsPlayer;
+            Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_STAND);
+            EnEgol_SetupSlam(this);
+            return;
+        }
         if (ABS_ALT(angleBehind) < 0x2000) {
             this->waypoint--;
             if (this->waypoint < 0) {
@@ -676,12 +706,16 @@ void EnEgol_SetupLaser(EnEgol* this) {
     EnEgol_ChangeAnim(this, EYEGORE_ANIM_LASER);
     this->actionTimer = 0;
     this->laserCount = 0;
+    this->eoSwept = false;
+    this->eoSweepTimer = 0;
     this->action = EYEGORE_ACTION_LASER;
     this->actionFunc = EnEgol_Laser;
 }
 
 void EnEgol_Laser(EnEgol* this, PlayState* play) {
     static s16 sLaserAngles[3] = { 0x1F40, 0xBB8, 0x7D0 };
+    // Eyegore Overhaul: five shots stepping from near its feet out to long range
+    static s16 sEoLaserAngles[5] = { 0x1F40, 0x1770, 0xFA0, 0xBB8, 0x7D0 };
     s32 pad1;
     Vec3f stonePos;
     s32 pad2;
@@ -750,11 +784,50 @@ void EnEgol_Laser(EnEgol* this, PlayState* play) {
         } else {
             Math_SmoothStepToS(&this->headRot, 0, 5, 0x1F4, 5);
         }
-        if (this->laserState == EYEGORE_LASER_OFF) {
-            if (this->laserCount >= 3) {
+        // Eyegore Overhaul: the body keeps turning towards Link between shots, so the blasts walk onto him
+        if (EO_EYEGORE_ON() && !this->chargingLaser) {
+            Math_ScaledStepToS(&this->actor.world.rot.y, this->actor.yawTowardsPlayer,
+                               EnEgol_EoEnraged(this) ? 0x260 : 0x180);
+        }
+
+        if (this->eoSweepTimer > 0) {
+            // Eyegore Overhaul: the enraged finale, a stream of light that sweeps after Link
+            Player* player = GET_PLAYER(play);
+            Vec3f vel;
+            EoShot* shot;
+
+            this->eoSweepTimer--;
+            Math_ApproachF(&this->eoSweepTarget.x, player->actor.world.pos.x, 1.0f, 16.0f);
+            Math_ApproachF(&this->eoSweepTarget.y, player->actor.world.pos.y + 20.0f, 1.0f, 16.0f);
+            Math_ApproachF(&this->eoSweepTarget.z, player->actor.world.pos.z, 1.0f, 16.0f);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_BEAM - SFX_FLAG);
+            if ((this->eoSweepTimer % 2) == 0) {
+                BoOrb_AimVelocity(&this->eyePos, &this->eoSweepTarget, 30.0f, 0, &vel);
+                shot = EoShot_Orb(play, &this->actor, BO_ORB_LIGHT, &this->eyePos, &vel);
+                if (shot != NULL) {
+                    shot->orb.life = shot->orb.maxLife = 40;
+                    shot->orb.drawScale = 3.0f;
+                }
+            }
+            if (this->eoSweepTimer == 0) {
                 EnEgol_SetupWalk(this);
+            }
+        } else if (this->laserState == EYEGORE_LASER_OFF) {
+            if (this->laserCount >= EnEgol_EoLaserShots(this)) {
+                if (EnEgol_EoEnraged(this) && !this->eoSwept && Eo_CanAttack(play)) {
+                    Player* player = GET_PLAYER(play);
+
+                    this->eoSwept = true;
+                    this->eoSweepTimer = 50;
+                    this->eoSweepTarget.x = this->eyePos.x + ((player->actor.world.pos.x - this->eyePos.x) * 0.5f);
+                    this->eoSweepTarget.y = player->actor.world.pos.y;
+                    this->eoSweepTarget.z = this->eyePos.z + ((player->actor.world.pos.z - this->eyePos.z) * 0.5f);
+                    Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_DEMO_EYE);
+                } else {
+                    EnEgol_SetupWalk(this);
+                }
             } else {
-                this->laserRot.x = sLaserAngles[this->laserCount];
+                this->laserRot.x = EO_EYEGORE_ON() ? sEoLaserAngles[this->laserCount] : sLaserAngles[this->laserCount];
                 this->laserScaleTarget.z = 0.0f;
                 this->laserScale.z = 0.0f;
                 if (this->laserCount == 0) {
@@ -891,6 +964,10 @@ void EnEgol_Stop(EnEgol* this, PlayState* play) {
 }
 
 void EnEgol_SetupSlam(EnEgol* this) {
+    // (reset for a fresh slam; a second slam keeps it set)
+    if (this->action != EYEGORE_ACTION_SLAM) {
+        this->eoSecondSlam = false;
+    }
     EnEgol_ChangeAnim(this, EYEGORE_ANIM_SLAM);
     this->action = EYEGORE_ACTION_SLAM;
     this->actionFunc = EnEgol_Slam;
@@ -932,10 +1009,40 @@ void EnEgol_Slam(EnEgol* this, PlayState* play) {
             spawnPos.y = this->actor.floorHeight + 2.0f;
             spawnPos.z += Math_CosS(this->actor.world.rot.y) * 55.0f;
             EnEgol_SpawnEffect(this, &spawnPos, &gZeroVec3s, 100, 0.03f, EYEGORE_EFFECT_IMPACT);
+
+            // Eyegore Overhaul: a shockwave races across the floor and rubble shakes loose above Link
+            if (EO_EYEGORE_ON() && Eo_CanAttack(play)) {
+                s32 j;
+
+                spawnPos.y = this->actor.floorHeight;
+                EoShot_Ring(play, &this->actor, EO_LOOK_DUST, &spawnPos, 600.0f, 11.0f, 0x10);
+
+                for (j = 0; j < (EnEgol_EoEnraged(this) ? 4 : 3); j++) {
+                    Vec3f rockSpot = player->actor.world.pos;
+                    f32 floorY;
+
+                    rockSpot.x += Rand_CenteredFloat(320.0f);
+                    rockSpot.z += Rand_CenteredFloat(320.0f);
+                    if (Eo_FindFloor(play, &rockSpot, 150.0f, &floorY)) {
+                        rockSpot.y = floorY;
+                        EoShot_Falling(play, &this->actor, (Gfx*)gEyegoreStoneDL, 0.016f, &rockSpot,
+                                       260.0f + (j * 50.0f), 0x10);
+                    }
+                }
+            }
         }
         EnEgol_DestroyBlocks(this, play, this->rightHandPos, this->leftHandPos);
     }
     if (curFrame >= this->animEndFrame) {
+        if (EnEgol_EoEnraged(this) && !this->eoSecondSlam) {
+            // Eyegore Overhaul: once enraged it slams twice, turning to face Link for the second blow. The eye opens up
+            // after the second slam, for exactly as long as in vanilla.
+            this->eoSecondSlam = true;
+            Math_ScaledStepToS(&this->actor.world.rot.y, this->actor.yawTowardsPlayer, 0x3000);
+            this->actor.shape.rot.y = this->actor.world.rot.y;
+            EnEgol_ChangeAnim(this, EYEGORE_ANIM_SLAM);
+            return;
+        }
         EnEgol_SetupSlamWait(this);
     } else if ((this->skelAnime.curFrame <= 17.0f) && (this->skelAnime.curFrame >= 10.0f)) {
         CollisionCheck_SetAT(play, &play->colChkCtx, &this->bodyCollider.base);
@@ -1182,6 +1289,23 @@ void EnEgol_CollisionCheck(EnEgol* this, PlayState* play) {
             case EYEGORE_DMGEFF_NONE:
                 if ((this->action == EYEGORE_ACTION_SLAM_WAIT) || (this->action == EYEGORE_ACTION_STUNNED)) {
                     reaction = EYEGORE_HIT_DAMAGE;
+                } else if (EO_EYEGORE_ON() && (this->action == EYEGORE_ACTION_LASER) && this->chargingLaser) {
+                    // Eyegore Overhaul: hit in the eye while charging its laser, it staggers
+                    reaction = EYEGORE_HIT_NONE;
+                    this->chargingLaser = false;
+                    this->chargeLevel = 0;
+                    this->actionTimer = 0;
+                    this->eoSweepTimer = 0;
+                    this->laserState = EYEGORE_LASER_OFF;
+                    Math_Vec3f_Copy(&this->laserScale, &gZeroVec3f);
+                    Math_Vec3f_Copy(&this->laserScaleTarget, &gZeroVec3f);
+                    Math_Vec3f_Copy(&this->laserCollider.dim.quad[1], &this->laserBase);
+                    Math_Vec3f_Copy(&this->laserCollider.dim.quad[3], &this->laserBase);
+                    Math_Vec3f_Copy(&this->laserCollider.dim.quad[0], &this->laserBase);
+                    Math_Vec3f_Copy(&this->laserCollider.dim.quad[2], &this->laserBase);
+                    Actor_SetColorFilter(&this->actor, COLORFILTER_COLORFLAG_BLUE, 120, COLORFILTER_BUFFLAG_OPA, 40);
+                    Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_DAMAGE);
+                    EnEgol_SetupStunned(this);
                 }
                 break;
 
@@ -1289,7 +1413,9 @@ void EnEgol_Update(Actor* thisx, PlayState* play) {
         this->pupilRot.x = this->pupilRot.y = 0;
     }
     if (this->eyeShutTimer == 0) {
-        if (((this->action == EYEGORE_ACTION_WALK) || (this->action == EYEGORE_ACTION_LASER)) && !this->isRetreating) {
+        if (((this->action == EYEGORE_ACTION_WALK) || (this->action == EYEGORE_ACTION_LASER)) && !this->isRetreating &&
+            !(EO_EYEGORE_ON() && (this->action == EYEGORE_ACTION_LASER) && this->chargingLaser)) {
+            // (Eyegore Overhaul: while charging the laser it keeps its eye open)
             Actor* projectile = func_800BC270(play, &this->actor, 80.0f, 0x138B0);
             // last argument is DMG_ZORA_BOOMERANG | DMG_HOOKSHOT | DMG_NORMAL_ARROW | DMG_FIRE_ARROW | DMG_ICE_ARROW |
             // DMG_LIGHT_ARROW | DMG_DEKU_BUBBLE
@@ -1369,6 +1495,16 @@ s32 EnEgol_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* 
         this->eyeEnvColor.r = sEyeEnvColors[eyeColorIndex].r;
         this->eyeEnvColor.g = sEyeEnvColors[eyeColorIndex].g;
         this->eyeEnvColor.b = sEyeEnvColors[eyeColorIndex].b;
+
+        // Eyegore Overhaul: a red glow once enraged
+        if ((eyeColorIndex == 0) && EnEgol_EoEnraged(this)) {
+            this->eyePrimColor.r = 255;
+            this->eyePrimColor.g = 110;
+            this->eyePrimColor.b = 70;
+            this->eyeEnvColor.r = 220;
+            this->eyeEnvColor.g = 0;
+            this->eyeEnvColor.b = 0;
+        }
 
         gDPPipeSync(POLY_OPA_DISP++);
         gDPSetPrimColor(POLY_OPA_DISP++, 0, 0xFF, (u8)this->eyePrimColor.r, (u8)this->eyePrimColor.g,

@@ -150,6 +150,8 @@ typedef struct EnKnight {
     /* 0x6C2 */ u16 voiceSfx;
     /* 0x6C4 */ u8 seenCaptainsHat;
     /* 0x6C8 */ Vec3f projectedPos;
-} EnKnight; // size = 0x6D4
+    // Miniboss Overhaul
+    s16 eoSpitTimer;
+} EnKnight; // size = 0x6D4 (vanilla)
 
 #endif // Z_EN_KNIGHT_H

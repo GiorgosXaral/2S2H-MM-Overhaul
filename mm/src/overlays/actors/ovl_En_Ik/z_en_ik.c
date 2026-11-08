@@ -5,6 +5,7 @@
  */
 
 #include "z_en_ik.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64rumble.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 
@@ -46,6 +47,9 @@ void EnIk_SetupCutscene(EnIk* this);
 void EnIk_PlayCutscene(EnIk* this, PlayState* play);
 void EnIk_UpdateDamage(EnIk* this, PlayState* play);
 void EnIk_UpdateArmor(EnIk* this, PlayState* play);
+void EnIk_EoSetupThrowAxe(EnIk* this);
+void EnIk_EoThrowAxe(EnIk* this, PlayState* play);
+void EnIk_EoWaitForAxe(EnIk* this, PlayState* play);
 
 typedef struct {
     /* 0x0 */ Gfx* unk00;
@@ -278,6 +282,8 @@ void EnIk_Init(Actor* thisx, PlayState* play) {
     Collider_InitAndSetTris(play, &this->colliderTris, &this->actor, &sTrisInit, this->shieldColliderElements);
     Collider_InitAndSetQuad(play, &this->colliderQuad, &this->actor, &sQuadInit);
     CollisionCheck_SetInfo(&this->actor.colChkInfo, &sDamageTableArmor, &sColChkInfoInit);
+    this->actor.colChkInfo.health = EO_HP2(this->actor.colChkInfo.health); // Miniboss Overhaul: 18 -> 36
+    this->eoAxeCooldown = 60;
     this->actor.params = IK_GET_ARMOR_TYPE(&this->actor);
     this->actor.params--;
 
@@ -342,6 +348,19 @@ s32 EnIk_IsChangingAction(EnIk* this, PlayState* play) {
 s32 EnIk_ChooseAttack(EnIk* this) {
     s32 absYawDiff;
     s32 detectionThreshold; // angle threshold an Iron Knuckle will use to trigger a horizontal attack
+
+    // Miniboss Overhaul: no axe, no attack, until it has caught it again
+    if (EoShot_CountOwned(&this->actor, EO_SHOT_BOOMERANG) > 0) {
+        return false;
+    }
+
+    // Miniboss Overhaul: without its armor, an Iron Knuckle keeping its distance from Link throws its axe
+    if ((this->drawArmorFlags != 0) && (this->eoAxeCooldown == 0) && EO_MB_ATTACKS_ON() &&
+        (this->actor.xzDistToPlayer > 220.0f) && (this->actor.xzDistToPlayer < 650.0f) &&
+        (fabsf(this->actor.playerHeightRel) < 100.0f) && Actor_IsFacingPlayer(&this->actor, 0x1800)) {
+        EnIk_EoSetupThrowAxe(this);
+        return true;
+    }
 
     if ((this->actor.xzDistToPlayer < 100.0f) && (fabsf(this->actor.playerHeightRel) < 150.0f)) {
 
@@ -492,6 +511,23 @@ void EnIk_VerticalAttack(EnIk* this, PlayState* play) {
             Camera_AddQuake(GET_ACTIVE_CAM(play), 2, 25, 5);
             Rumble_Request(this->actor.xyzDistToPlayerSq, 180, 20, 100);
             CollisionCheck_SpawnShieldParticles(play, &particlePos);
+
+            // Miniboss Overhaul: the axe splits the ground, sending a shockwave forward (three once it has lost its
+            // armor)
+            if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+                particlePos.y = this->actor.floorHeight;
+                if (this->drawArmorFlags != 0) {
+                    s32 i;
+
+                    for (i = -1; i <= 1; i++) {
+                        EoShot_GroundWave(play, &this->actor, EO_LOOK_DUST, &particlePos,
+                                          this->actor.shape.rot.y + (i * 0x1400), 13.0f, 40, 0x10);
+                    }
+                } else {
+                    EoShot_GroundWave(play, &this->actor, EO_LOOK_DUST, &particlePos, this->actor.shape.rot.y, 13.0f,
+                                      45, 0x10);
+                }
+            }
         }
 
         if ((this->skelAnime.curFrame > 13.0f) && (this->skelAnime.curFrame < 23.0f)) {
@@ -791,7 +827,7 @@ void EnIk_UpdateDamage(EnIk* this, PlayState* play) {
             this->colliderQuad.base.atFlags &= ~AT_ON;
             if (Actor_ApplyDamage(&this->actor) == 0) {
                 if (this->drawArmorFlags == 0) {
-                    this->actor.colChkInfo.health = 9;
+                    this->actor.colChkInfo.health = EO_HP2(9); // Miniboss Overhaul: 9 -> 18 without armor
                     isArmorBroken = true;
                 } else {
                     Enemy_StartFinishingBlow(play, &this->actor);
@@ -850,6 +886,17 @@ void EnIk_UpdateArmor(EnIk* this, PlayState* play) {
         if (ikEffect->enabled) {
             Math_Vec3f_Sum(&ikEffect->pos, &ikEffect->velocity, &ikEffect->pos);
             ikEffect->velocity.y += -1.5f;
+
+            // Miniboss Overhaul: the armor flies off as shrapnel
+            if (EO_MB_ATTACKS_ON()) {
+                Player* player = GET_PLAYER(play);
+
+                if ((Math_Vec3f_DistXYZ(&ikEffect->pos, &player->actor.world.pos) < 45.0f) ||
+                    (Math_Vec3f_DistXYZ(&ikEffect->pos, &player->actor.focus.pos) < 45.0f)) {
+                    Eo_HurtPlayer(play, &this->actor, 0x08, Math_Vec3f_Yaw(&ikEffect->pos, &player->actor.world.pos),
+                                  5.0f, false, false);
+                }
+            }
             if (ikEffect->pos.y < this->actor.floorHeight) {
                 ikEffect->enabled = false;
                 ikEffect->pos.y = this->actor.floorHeight;
@@ -867,9 +914,65 @@ void EnIk_UpdateArmor(EnIk* this, PlayState* play) {
     }
 }
 
+/**
+ * Miniboss Overhaul: the axe throw. The Iron Knuckle swings overhead and lets go of its axe, which spins out at Link and
+ * comes back. Until it is caught, the Iron Knuckle is unarmed and just waits for it.
+ */
+void EnIk_EoSetupThrowAxe(EnIk* this) {
+    this->actor.speed = 0.0f;
+    Animation_Change(&this->skelAnime, &gIronKnuckleVerticalAttackAnim, 1.2f, 0.0f,
+                     Animation_GetLastFrame(&gIronKnuckleVerticalAttackAnim), ANIMMODE_ONCE_INTERP, -4.0f);
+    this->eoAxeThrown = false;
+    this->actionFunc = EnIk_EoThrowAxe;
+}
+
+void EnIk_EoThrowAxe(EnIk* this, PlayState* play) {
+    if (this->skelAnime.curFrame < 13.0f) {
+        Math_ScaledStepToS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 0x5DC);
+        this->actor.world.rot.y = this->actor.shape.rot.y;
+    }
+
+    if (!this->eoAxeThrown && (this->skelAnime.curFrame >= 15.0f)) {
+        Vec3f pos = this->bodyPartsPos[IRON_KNUCKLE_BODYPART_RIGHT_HAND];
+
+        this->eoAxeThrown = true;
+        pos.y = this->actor.world.pos.y + 50.0f;
+        EoShot_Boomerang(play, &this->actor, (Gfx*)gIronKnuckleAxeDL, this->actor.scale.x, &pos,
+                         this->actor.shape.rot.y, 19.0f, 0x10);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_IRONNACK_SWING_AXE);
+    }
+
+    if (SkelAnime_Update(&this->skelAnime)) {
+        f32 endFrame = Animation_GetLastFrame(&gIronKnuckleEndHorizontalAttackAnim);
+
+        Animation_Change(&this->skelAnime, &gIronKnuckleEndHorizontalAttackAnim, 1.0f, endFrame, endFrame,
+                         ANIMMODE_ONCE, 4.0f);
+        this->timer = 0;
+        this->actionFunc = EnIk_EoWaitForAxe;
+    }
+}
+
+void EnIk_EoWaitForAxe(EnIk* this, PlayState* play) {
+    SkelAnime_Update(&this->skelAnime);
+    Math_ScaledStepToS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 0x300);
+    this->actor.world.rot.y = this->actor.shape.rot.y;
+    this->timer++;
+
+    if ((EoShot_CountOwned(&this->actor, EO_SHOT_BOOMERANG) == 0) || (this->timer > 220)) {
+        Actor_PlaySfx(&this->actor, NA_SE_EN_IRONNACK_PULLOUT);
+        this->eoAxeCooldown = (s16)(Rand_ZeroFloat(120.0f) + 200.0f);
+        this->timer = 0;
+        EnIk_CheckActions(this, play);
+    }
+}
+
 void EnIk_Update(Actor* thisx, PlayState* play2) {
     PlayState* play = play2;
     EnIk* this = (EnIk*)thisx;
+
+    if (this->eoAxeCooldown > 0) {
+        this->eoAxeCooldown--;
+    }
 
     if (this->actionFunc != EnIk_PlayCutscene) {
         EnIk_UpdateDamage(this, play);
@@ -973,6 +1076,13 @@ s32 EnIk_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* po
         if (sLimbToArmorBodyParts[limbIndex] >= IRON_KNUCKLE_ARMOR_BODYPART_CHEST_FRONT) {
             *dList = NULL;
         }
+    }
+
+    // Miniboss Overhaul: the axe is not in its hand while it flies
+    if ((limbIndex == IRON_KNUCKLE_LIMB_AXE) &&
+        ((EoShot_CountOwned(&this->actor, EO_SHOT_BOOMERANG) > 0) ||
+         ((this->actionFunc == EnIk_EoThrowAxe) && this->eoAxeThrown))) {
+        *dList = NULL;
     }
     return false;
 }

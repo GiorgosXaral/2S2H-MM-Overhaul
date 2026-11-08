@@ -5,6 +5,7 @@
  */
 
 #include "z_en_bigslime.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64quake.h"
 #include "z64rumble.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
@@ -322,6 +323,7 @@ void EnBigslime_Init(Actor* thisx, PlayState* play2) {
 
     Actor_ProcessInitChain(&this->actor, sInitChain);
     CollisionCheck_SetInfo(&this->actor.colChkInfo, &sDamageTable, &sColChkInfoInit);
+    this->actor.colChkInfo.health = EO_HP2(this->actor.colChkInfo.health); // Miniboss Overhaul: 10 -> 20
     SkelAnime_InitFlex(play, &this->skelAnime, &gGekkoSkel, &gGekkoLookAroundAnim, this->jointTable, this->morphTable,
                        GEKKO_LIMB_MAX);
 
@@ -749,6 +751,14 @@ void EnBigslime_BreakIntoMinislime(EnBigslime* this, PlayState* play) {
 
     Rumble_Request(this->actor.xyzDistToPlayerSq, 180, 20, 100);
 
+    // Miniboss Overhaul: the shattered ice flies out as shards; raise the shield
+    if (EO_MB_ATTACKS_ON()) {
+        Vec3f shardPos = this->actor.world.pos;
+
+        shardPos.y = this->actor.floorHeight + 40.0f;
+        EoShot_OrbRing(play, &this->actor, BO_ORB_ICE, &shardPos, 11.0f, 10, (s16)Rand_Next());
+    }
+
     this->bigslimeCollider[0].base.atFlags &= ~AT_ON;
     this->gekkoCollider.base.acFlags &= ~(AC_ON | AC_HIT);
 
@@ -1083,6 +1093,13 @@ void EnBigslime_Drop(EnBigslime* this, PlayState* play) {
             this->rotation = 0;
         }
     } else if (this->actor.bgCheckFlags & BGCHECKFLAG_GROUND) {
+        // Miniboss Overhaul: the jelly hits the floor hard enough to send a wave across the room
+        if (EO_MB_ATTACKS_ON()) {
+            Vec3f ringPos = this->actor.world.pos;
+
+            ringPos.y = this->actor.floorHeight;
+            EoShot_Ring(play, &this->actor, EO_LOOK_WATER, &ringPos, 650.0f, 10.0f, 0x10);
+        }
         EnBigslime_SetupSquishFlat(this);
     } else {
         Math_StepToF(&this->actor.scale.x, 0.15f, 0.0025f);

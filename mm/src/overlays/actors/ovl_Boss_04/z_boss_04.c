@@ -5,6 +5,7 @@
  */
 
 #include "z_boss_04.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64shrink_window.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 
@@ -168,7 +169,8 @@ void Boss04_Init(Actor* thisx, PlayState* play2) {
     Actor_SetScale(&this->actor, 0.1f);
     this->actor.attentionRangeType = ATTENTION_RANGE_5;
     this->actor.hintId = TATL_HINT_ID_WART;
-    this->actor.colChkInfo.health = 20;
+    this->actor.colChkInfo.health = EO_HP2(20); // Miniboss Overhaul: 20 -> 40
+    this->eoCooldown = 150;
     this->actor.colChkInfo.damageTable = &sDamageTable;
     this->unk_700 = 1.0f;
     this->unk_6FC = 1.0f;
@@ -424,6 +426,105 @@ void func_809ECD00(Boss04* this, PlayState* play) {
     this->actionFunc = func_809ECD18;
 }
 
+/**
+ * Miniboss Overhaul: when Wart crashes into a wall in its second phase, bubbles rain down around Link.
+ */
+void Boss04_EoBubbleRain(Boss04* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    s32 i;
+
+    if (!EO_MB_ATTACKS_ON() || !Eo_CanAttack(play)) {
+        return;
+    }
+
+    for (i = 0; i < 6; i++) {
+        Vec3f pos;
+        Vec3f vel = { 0.0f, -6.0f, 0.0f };
+        EoShot* shot;
+
+        pos.x = player->actor.world.pos.x + Rand_CenteredFloat(500.0f);
+        pos.y = player->actor.world.pos.y + 320.0f + (i * 30.0f);
+        pos.z = player->actor.world.pos.z + Rand_CenteredFloat(500.0f);
+        shot = EoShot_Orb(play, &this->actor, BO_ORB_WATER, &pos, &vel);
+        if (shot != NULL) {
+            shot->orb.gravity = -0.4f;
+        }
+    }
+}
+
+/**
+ * Miniboss Overhaul: every few seconds, while its eye is open, Wart shudders and then fires a beam of light that sweeps
+ * after Link with a lag, so he can outrun it or duck behind a pillar. In the bubble phase it also sends out a ring of
+ * bubbles as it charges. Since the eye has to be open, the attack is also Wart's weak moment.
+ */
+void Boss04_EoExtras(Boss04* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f muzzle;
+
+    if (!EO_MB_ATTACKS_ON() || !Eo_CanAttack(play) ||
+        ((this->actionFunc != func_809ECD18) && (this->actionFunc != func_809ECF58))) {
+        this->eoChargeTimer = 0;
+        this->eoBeamTimer = 0;
+        return;
+    }
+
+    muzzle.x = this->actor.world.pos.x + (Math_SinS(this->actor.shape.rot.y) * 70.0f);
+    muzzle.y = this->actor.world.pos.y;
+    muzzle.z = this->actor.world.pos.z + (Math_CosS(this->actor.shape.rot.y) * 70.0f);
+
+    if (this->eoBeamTimer > 0) {
+        this->eoBeamTimer--;
+        Math_ApproachF(&this->eoBeamTarget.x, player->actor.world.pos.x, 1.0f, 18.0f);
+        Math_ApproachF(&this->eoBeamTarget.y, player->actor.world.pos.y + 25.0f, 1.0f, 18.0f);
+        Math_ApproachF(&this->eoBeamTarget.z, player->actor.world.pos.z, 1.0f, 18.0f);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_BEAM - SFX_FLAG);
+
+        if ((this->eoBeamTimer % 2) == 0) {
+            Vec3f vel;
+            EoShot* shot;
+
+            BoOrb_AimVelocity(&muzzle, &this->eoBeamTarget, 32.0f, 0, &vel);
+            shot = EoShot_Orb(play, &this->actor, BO_ORB_LIGHT, &muzzle, &vel);
+            if (shot != NULL) {
+                shot->orb.life = shot->orb.maxLife = 45;
+                shot->orb.drawScale = 3.0f;
+            }
+        }
+
+        if (this->eoBeamTimer == 0) {
+            this->eoCooldown = (s16)(Rand_ZeroFloat(80.0f) + 170.0f);
+        }
+        return;
+    }
+
+    if (this->eoChargeTimer > 0) {
+        this->eoChargeTimer--;
+        this->unk_2DA = 8; // shudder
+        if (this->eoChargeTimer == 0) {
+            this->eoBeamTimer = (this->actionFunc == func_809ECF58) ? 30 : 44;
+            // The beam starts short of Link and walks onto him
+            this->eoBeamTarget.x = muzzle.x + ((player->actor.world.pos.x - muzzle.x) * 0.5f);
+            this->eoBeamTarget.y = player->actor.world.pos.y;
+            this->eoBeamTarget.z = muzzle.z + ((player->actor.world.pos.z - muzzle.z) * 0.5f);
+        }
+        return;
+    }
+
+    if (this->eoCooldown > 0) {
+        this->eoCooldown--;
+        return;
+    }
+
+    if ((this->unk_2CC > 3000.0f) && (this->actor.xzDistToPlayer > 150.0f) && (this->unk_1FE == 0)) {
+        this->eoChargeTimer = 26;
+        Actor_PlaySfx(&this->actor, NA_SE_EN_EYEGOLE_DEMO_EYE);
+
+        if (this->actionFunc == func_809ECD18) {
+            EoShot_OrbRing(play, &this->actor, BO_ORB_WATER, &this->actor.world.pos, 9.0f, 8, (s16)Rand_Next());
+        }
+    }
+}
+
 void func_809ECD18(Boss04* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
 
@@ -451,7 +552,7 @@ void func_809ECD18(Boss04* this, PlayState* play) {
                    Math_Atan2S(this->unk_6C8.x - this->actor.world.pos.x, this->unk_6C8.z - this->actor.world.pos.z), 5,
                    0x200);
 
-    if (((s8)this->actor.colChkInfo.health <= 10) || (KREG(88) != 0)) {
+    if (((s8)this->actor.colChkInfo.health <= EO_HP2(10)) || (KREG(88) != 0)) {
         KREG(88) = 0;
         func_809ECEF4(this);
     }
@@ -483,6 +584,7 @@ void func_809ECF58(Boss04* this, PlayState* play) {
         this->actor.speed = 0.0f;
 
         if (this->actor.bgCheckFlags & BGCHECKFLAG_WALL) {
+            Boss04_EoBubbleRain(this, play);
             Audio_PlaySfx(NA_SE_IT_BIG_BOMB_EXPLOSION);
             Actor_RequestQuakeAndRumble(&this->actor, play, 15, 10);
             this->unk_6F4 = 15;
@@ -707,6 +809,7 @@ void Boss04_Update(Actor* thisx, PlayState* play2) {
         }
 
         this->actionFunc(this, play);
+        Boss04_EoExtras(this, play);
 
         Actor_MoveWithGravity(&this->actor);
         this->actor.world.pos.y -= 100.0f;

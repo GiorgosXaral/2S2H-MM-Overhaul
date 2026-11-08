@@ -43,7 +43,12 @@ typedef enum BoOrbKind {
     /* 1 */ BO_ORB_WATER,    // knocks Link back hard
     /* 2 */ BO_ORB_ELECTRIC, // shocks Link
     /* 3 */ BO_ORB_EMBER,    // a small, short lived puff of fire (fire breath, fire waves)
-    /* 4 */ BO_ORB_KIND_MAX
+    // Added by the Miniboss & Enemy Overhaul
+    /* 4 */ BO_ORB_ICE,      // freezes Link
+    /* 5 */ BO_ORB_CURSE,    // a purple ghost flame (plain damage)
+    /* 6 */ BO_ORB_LIGHT,    // a white-gold ball of light that shocks Link
+    /* 7 */ BO_ORB_MUD,      // a glob of mud that knocks Link back
+    /* 8 */ BO_ORB_KIND_MAX
 } BoOrbKind;
 
 typedef struct BoOrb {

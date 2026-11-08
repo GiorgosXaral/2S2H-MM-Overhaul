@@ -74,6 +74,11 @@ typedef struct Boss04 {
     /* 0x744 */ f32 subCamFov;
     /* 0x748 */ s16 subCamAtOscillator;
     /* 0x74A */ u8 unk_74A;
-} Boss04; // size = 0x74C
+    // Miniboss Overhaul
+    s16 eoCooldown;
+    s16 eoChargeTimer;
+    s16 eoBeamTimer;
+    Vec3f eoBeamTarget;
+} Boss04; // size = 0x74C (vanilla)
 
 #endif // Z_BOSS_04_H

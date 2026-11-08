@@ -72,6 +72,9 @@ typedef struct EnRailgibud {
     /* 0x402 */ s16 timeInitialized; // unused other than setting it
     /* 0x404 */ u8 drawDmgEffType;
     /* 0x405 */ s8 unk_405; // related to player->unk_ADD
-} EnRailgibud; // size = 0x408
+    // Enemy Overhaul
+    s16 eoLungeTimer;
+    s16 eoLungeCooldown;
+} EnRailgibud; // size (vanilla) = 0x408
 
 #endif // Z_EN_RAILGIBUD_H

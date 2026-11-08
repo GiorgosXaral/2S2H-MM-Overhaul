@@ -49,6 +49,8 @@ typedef struct EnWf {
     /* 0x350 */ ColliderJntSphElement collider1Elements[4];
     /* 0x450 */ ColliderCylinder collider2;
     /* 0x49C */ ColliderCylinder collider3;
-} EnWf; // size = 0x4E8
+    // Enemy Overhaul
+    u8 eoHowled;
+} EnWf; // size = 0x4E8 (vanilla)
 
 #endif // Z_EN_WF_H

@@ -5,6 +5,7 @@
  */
 
 #include "z_en_bigpo.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "overlays/actors/ovl_En_Clear_Tag/z_en_clear_tag.h"
 #include "objects/object_bigpo/object_bigpo.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -205,6 +206,7 @@ void EnBigpo_Init(Actor* thisx, PlayState* play2) {
                    BIG_POE_LIMB_MAX);
     Collider_InitAndSetCylinder(play, &this->collider, &this->actor, &sCylinderInit);
     CollisionCheck_SetInfo(&thisx->colChkInfo, &sDamageTable, &sColChkInfoInit);
+    thisx->colChkInfo.health = EO_HP2(thisx->colChkInfo.health); // Miniboss Overhaul: 10 -> 20
 
     for (i = 0; i < ARRAY_COUNT(this->fires); i++) {
         firesPtr = &this->fires[i];
@@ -535,6 +537,12 @@ void EnBigpo_WarpingIn(EnBigpo* this, PlayState* play) {
             Audio_PlayBgm_StorePrevBgm(NA_BGM_MINI_BOSS);
             this->storePrevBgm = true;
         }
+
+        // Miniboss Overhaul: it comes back swinging its lantern, throwing a fan of ghost fire
+        if (EO_MB_ATTACKS_ON() && Eo_CanAttack(play)) {
+            EoShot_OrbFan(play, &this->actor, BO_ORB_CURSE, &this->actor.focus.pos, 9.0f, 3, 0x1400);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_PO_LAUGH);
+        }
         EnBigpo_SetupIdleFlying(this);
     }
 }
@@ -613,6 +621,17 @@ void EnBigpo_SpinAttack(EnBigpo* this, PlayState* play) {
     Math_StepToF(&this->actor.speed, 10.0f, 1.0f);
     Math_SmoothStepToF(&this->actor.world.pos.y, player->actor.world.pos.y, 0.3f, 7.5f, 1.0f);
     EnBigpo_UpdateSpin(this);
+
+    // Miniboss Overhaul: the spinning lantern sheds embers behind it
+    if (((play->gameplayFrames % 5) == 0) && EO_MB_ATTACKS_ON()) {
+        Vec3f emberPos = this->actor.world.pos;
+        Vec3f emberVel;
+
+        emberVel.x = Rand_CenteredFloat(6.0f);
+        emberVel.y = 2.0f;
+        emberVel.z = Rand_CenteredFloat(6.0f);
+        EoShot_Orb(play, &this->actor, BO_ORB_EMBER, &emberPos, &emberVel);
+    }
     yawDiff = this->actor.yawTowardsPlayer - this->actor.world.rot.y;
     // because acFlags AC_HARD and COL_MATERIAL_METAL, if we hit it means we contacted as attack
     if ((this->collider.base.atFlags & AT_HIT) ||

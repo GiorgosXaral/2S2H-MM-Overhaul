@@ -105,6 +105,8 @@ typedef struct EnJso2 {
     /* 0x106C */ Vec3f unk_106C; // unused, type inferred from surrounding members
     /* 0x1078 */ Vec3f subCamEyeNext;
     /* 0x1084 */ Vec3f subCamAtNext;
-} EnJso2; // size = 0x1090
+    // Miniboss Overhaul
+    u8 eoGarosCalled;
+} EnJso2; // size = 0x1090 (vanilla)
 
 #endif // Z_EN_JSO2_H

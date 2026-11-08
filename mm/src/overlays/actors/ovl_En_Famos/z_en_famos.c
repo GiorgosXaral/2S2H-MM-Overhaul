@@ -5,6 +5,7 @@
  */
 
 #include "z_en_famos.h"
+#include "2s2h/Enhancements/EnemyOverhaul/EnemyOverhaul.h"
 #include "z64rumble.h"
 #include "overlays/actors/ovl_En_Bom/z_en_bom.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -462,6 +463,21 @@ void EnFamos_Alert(EnFamos* this, PlayState* play) {
         Actor_PlaySfx_Flagged(&this->actor, NA_SE_EN_FAMOS_FLOAT - SFX_FLAG);
     }
 
+    // Enemy Overhaul: a Death Armos that spots Link rouses the others nearby
+    if ((this->stateTimer == 8) && EO_ENEMIES_ON()) {
+        Actor* other;
+
+        for (other = play->actorCtx.actorLists[ACTORCAT_ENEMY].first; other != NULL; other = other->next) {
+            EnFamos* famos = (EnFamos*)other;
+
+            if ((other != &this->actor) && (other->id == ACTOR_EN_FAMOS) && (other->update != NULL) &&
+                famos->isCalm && (Actor_WorldDistXZToActor(other, &this->actor) < 700.0f)) {
+                other->shape.rot.y = other->yawTowardsPlayer;
+                EnFamos_SetupAlert(famos);
+            }
+        }
+    }
+
     this->stateTimer--;
     if (this->stateTimer == 0) {
         this->actor.world.pos.y = this->baseHeight;
@@ -547,6 +563,14 @@ void EnFamos_Attack(EnFamos* this, PlayState* play) {
             Camera_AddQuake(GET_ACTIVE_CAM(play), 2, 15, 10);
             Rumble_Request(this->actor.xyzDistToPlayerSq, 180, 20, 100);
             EnFamos_SetupAttackDebris(this);
+
+            // Enemy Overhaul: the crash sends a shockwave across the floor
+            if (EO_ENEMIES_ON() && Eo_CanAttack(play)) {
+                Vec3f ringPos = this->actor.world.pos;
+
+                ringPos.y = this->actor.floorHeight;
+                EoShot_Ring(play, &this->actor, EO_LOOK_DUST, &ringPos, 420.0f, 10.0f, 0x10);
+            }
 
             // spawn crator on floor
             Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_EN_TEST, this->actor.world.pos.x,
@@ -679,6 +703,14 @@ void EnFamos_DeathExplosion(EnFamos* this, PlayState* play) {
     Math_StepToF(&this->actor.speed, 3.0f, 0.3f);
     if (this->actor.colorFilterTimer == 0) {
         Actor_SetColorFilter(&this->actor, COLORFILTER_COLORFLAG_RED, 255, COLORFILTER_BUFFLAG_OPA, 4);
+    }
+
+    // Enemy Overhaul: in its death throes it drifts after Link before it blows
+    if (EO_ENEMIES_ON()) {
+        Player* player = GET_PLAYER(play);
+
+        Math_ApproachF(&this->targetDest.x, player->actor.world.pos.x, 1.0f, 4.0f);
+        Math_ApproachF(&this->targetDest.z, player->actor.world.pos.z, 1.0f, 4.0f);
     }
 
     this->actor.world.pos.x = Rand_CenteredFloat(5.0f) + this->targetDest.x;

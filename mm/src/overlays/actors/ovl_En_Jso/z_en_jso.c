@@ -43,6 +43,7 @@ void EnJso_SetupFallDownAndTalk(EnJso* this, PlayState* play);
 void EnJso_FallDownAndTalk(EnJso* this, PlayState* play);
 void EnJso_TellHint(EnJso* this, PlayState* play);
 void EnJso_BurstIntoFlames(EnJso* this, PlayState* play);
+void EnJso_ChangeAnim(EnJso* this, s32 animIndex);
 
 typedef enum EnJsoAction {
     /*  0 */ EN_JSO_ACTION_INTRO_CUTSCENE,
@@ -304,7 +305,40 @@ void EnJso_Init(Actor* thisx, PlayState* play) {
     this->actor.flags |= ACTOR_FLAG_LOCK_ON_DISABLED;
     this->hintType = EN_JSO_GET_HINT_TYPE(&this->actor);
     this->introCsType = this->hintType & EN_JSO_INTRO_SCALE_UP;
+
+    if (EN_JSO_IS_SUMMONED(&this->actor)) {
+        this->hintType &= ~EN_JSO_PARAMS_SUMMONED;
+        this->actor.shape.shadowScale = 16.0f;
+        this->actor.flags &= ~ACTOR_FLAG_LOCK_ON_DISABLED;
+        this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
+        EnJso_ChangeAnim(this, EN_JSO_ANIM_IDLE);
+        EnJso_SetupJumpBack(this);
+        return;
+    }
+
     EnJso_SetupIntroCutscene(this);
+}
+
+/**
+ * Miniboss Overhaul: a summoned Garo bursts into flames as soon as it is defeated.
+ */
+void EnJso_EoVanish(EnJso* this, PlayState* play) {
+    Vec3f firePos;
+    Vec3f fireVelocity = { 0.0f, 0.0f, 0.0f };
+    s32 i;
+
+    for (i = 0; i < 6; i++) {
+        Math_Vec3f_Copy(&firePos, &this->actor.world.pos);
+        firePos.x += Rand_CenteredFloat(40.0f);
+        firePos.y = this->actor.floorHeight;
+        firePos.z += Rand_CenteredFloat(40.0f);
+        fireVelocity.x = Rand_CenteredFloat(1.5f);
+        fireVelocity.z = Rand_CenteredFloat(1.5f);
+        func_800B3030(play, &firePos, &fireVelocity, &fireVelocity, (s16)(Rand_ZeroFloat(100.0f) + 100.0f), 20, 1);
+    }
+    SoundSource_PlaySfxAtFixedWorldPos(play, &this->actor.world.pos, 20, NA_SE_EN_EXTINCT);
+    sIsAttacking = false;
+    Actor_Kill(&this->actor);
 }
 
 void EnJso_Destroy(Actor* thisx, PlayState* play) {
@@ -1155,6 +1189,10 @@ void EnJso_Dead(EnJso* this, PlayState* play) {
     }
 
     if ((curFrame >= this->animEndFrame) && (this->timer == 0)) {
+        if (EN_JSO_IS_SUMMONED(&this->actor)) {
+            EnJso_EoVanish(this, play);
+            return;
+        }
         EnJso_SetupFallDownAndTalk(this, play);
     }
 }
