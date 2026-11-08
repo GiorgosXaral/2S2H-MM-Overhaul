@@ -204,6 +204,11 @@ static const std::unordered_map<int32_t, const char*> eponaControlModeOptions = 
     { 2, "Hybrid" },
 };
 
+static const std::unordered_map<int32_t, const char*> secretClueStrengthOptions = {
+    { 0, "Subtle" },
+    { 1, "Obvious" },
+};
+
 static const std::unordered_map<int32_t, const char*> damageMultiplierOptions = {
     { 0, "1x" }, { 1, "2x" }, { 2, "4x" }, { 3, "8x" }, { 4, "16x" }, { 10, "1 Hit KO" },
 };
@@ -1898,6 +1903,58 @@ void BenMenu::AddEnhancements() {
                      .Tooltip("During Zora Link's fast swim, he tilts down to dive and up to surface about twice as "
                               "fast when you push the stick.")
                      .DefaultValue(true));
+
+    // Secret Detection
+    path = { "Enhancements", "Secrets", SECTION_COLUMN_1 };
+    AddSidebarEntry("Enhancements", "Secrets", 2);
+    AddWidget(path, "Secret Detection", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Secret Detection", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.Enabled")
+        .Options(CheckboxOptions()
+                     .Tooltip("Undiscovered secrets near Link give off sparkles. The colour tells you what to do:\n"
+                              "- Gold, with dust: explosives (bombs, the Blast Mask or a Powder Keg)\n"
+                              "- Purple: the Lens of Truth\n"
+                              "- Pink: a hidden Stray Fairy - break the pot, crate, barrel or beehive, or open the "
+                              "chest\n"
+                              "- White: an invisible Rupee\n\n"
+                              "Clues stop once the secret has been found.")
+                     .DefaultValue(true));
+    AddWidget(path, "Clue Strength", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.SecretDetection.Strength")
+        .Options(ComboboxOptions()
+                     .Tooltip("Subtle: a few sparkles, only when Link is close.\n\n"
+                              "Obvious: more sparkles from further away, and explosive secrets also puff dust.")
+                     .ComboMap(&secretClueStrengthOptions)
+                     .DefaultIndex(1));
+    AddWidget(path, "Require Lens of Truth", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.RequireLens")
+        .Options(CheckboxOptions()
+                     .Tooltip("Clues only appear once Link owns the Lens of Truth.")
+                     .DefaultValue(false));
+    path.column = SECTION_COLUMN_2;
+    AddWidget(path, "Clues", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Explosive Secrets", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.Explosive")
+        .Options(CheckboxOptions()
+                     .Tooltip("Gold sparkles and dust: bombable walls and floors (the temples, the Astral Observatory, "
+                              "Beneath the Grave, the Ocean Spider House, the Moon), breakable boulders including the "
+                              "big Powder Keg ones, and hidden grottos that open with an explosion.")
+                     .DefaultValue(true));
+    AddWidget(path, "Lens Secrets", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.Lens")
+        .Options(CheckboxOptions()
+                     .Tooltip("Purple sparkles: platforms and objects only the Lens of Truth shows, and invisible "
+                              "chests. They stop while the Lens is in use.")
+                     .DefaultValue(true));
+    AddWidget(path, "Hidden Stray Fairies", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.StrayFairies")
+        .Options(CheckboxOptions()
+                     .Tooltip("Pink sparkles: pots, crates, barrels, beehives, flower pots and snowballs that hide a "
+                              "Stray Fairy you haven't collected, and chests with a Stray Fairy inside.")
+                     .DefaultValue(true));
+    AddWidget(path, "Invisible Rupees", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SecretDetection.Rupees")
+        .Options(CheckboxOptions().Tooltip("White sparkles: Rupees you can't see until you pick them up.").DefaultValue(true));
 
     // Epona Control Overhaul (port of LT_Schmiddy's mod for Majora's Mask: Recompiled)
     path = { "Enhancements", "Epona", SECTION_COLUMN_1 };

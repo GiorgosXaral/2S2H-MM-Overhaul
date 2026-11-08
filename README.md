@@ -112,6 +112,22 @@ The Fierce Deity orb replaces the old sword beam, fires on any normal slash (eve
 
 How deep Link can dive doesn't change, and 2S2H's own **Faster Swim** (mashing B) still works alongside. Untick **Swimming Overhaul** for exactly the original swimming.
 
+### Secret Detection
+*Enhancements → Secrets*
+
+Undiscovered secrets near Link give off sparkles, and the colour tells you what to do. Clues stop by themselves once a secret has been found.
+
+| Clue | What to do | Covers |
+| - | - | - |
+| **Gold sparkles + dust** | Bombs, the Blast Mask or a Powder Keg | Bombable walls and floors (temples, Astral Observatory, Beneath the Grave, Ocean Spider House, the Moon), breakable boulders including the big Powder Keg ones, hidden grottos |
+| **Purple sparkles** | Lens of Truth | Platforms and objects only the Lens shows, invisible chests (paused while the Lens is in use) |
+| **Pink sparkles** | Break it or open it | A hidden **Stray Fairy** you haven't collected: in a pot, crate, barrel, beehive, flower pot or snowball, or inside a chest |
+| **White sparkles** | Walk over it | Invisible Rupees |
+
+- **Clue Strength**: *Subtle* (a few sparkles, close range) or *Obvious* (default: more sparkles from further away, plus dust).
+- **Require Lens of Truth**: clues only appear once you own the Lens of Truth (off by default).
+- Each clue type has its own switch.
+
 ### Instant Text
 *Enhancements → Time Savers → Instant Text*
 
