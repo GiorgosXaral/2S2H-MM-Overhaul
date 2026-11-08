@@ -1843,6 +1843,62 @@ void BenMenu::AddEnhancements() {
                      .Max(40)
                      .DefaultValue(0));
 
+    // Swimming Overhaul
+    path = { "Enhancements", "Swimming", SECTION_COLUMN_1 };
+    AddSidebarEntry("Enhancements", "Swimming", 2);
+    AddWidget(path, "Swimming Overhaul", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Swimming Overhaul", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.Enabled")
+        .Options(CheckboxOptions()
+                     .Tooltip("Smoother, faster and more responsive swimming and diving for Link and Zora Link.\n\n"
+                              "Turn this off for exactly the original swimming.")
+                     .DefaultValue(true));
+    AddWidget(path, "Swim Speed: %.2fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.SwimOverhaul.Speed")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How fast Link swims at the surface, compared to the original game. Zora Link's fast "
+                              "swim (holding A) is not affected.")
+                     .Min(1.0f)
+                     .Max(2.0f)
+                     .Step(0.05f)
+                     .DefaultValue(1.3f));
+    AddWidget(path, "Smooth Strokes", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.SmoothStrokes")
+        .Options(CheckboxOptions()
+                     .Tooltip("Link speeds up steadily while you hold the stick, instead of surging forward on each "
+                              "stroke and slowing down in between.")
+                     .DefaultValue(true));
+    AddWidget(path, "Faster Turning", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.FasterTurning")
+        .Options(CheckboxOptions()
+                     .Tooltip("Link turns about 75% faster while swimming, and stops three times quicker when you "
+                              "reverse direction.")
+                     .DefaultValue(true));
+    AddWidget(path, "Faster Diving", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.FasterDiving")
+        .Options(CheckboxOptions()
+                     .Tooltip("Link sinks about twice as fast while you hold A, and steers at full speed underwater "
+                              "instead of half speed. How deep he can dive doesn't change.")
+                     .DefaultValue(true));
+    AddWidget(path, "Faster Resurfacing", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.FasterResurfacing")
+        .Options(CheckboxOptions()
+                     .Tooltip("Link rises back to the surface about 50% faster after a dive.")
+                     .DefaultValue(true));
+    path.column = SECTION_COLUMN_2;
+    AddWidget(path, "Zora Link", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Zora Sharper Turning", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.ZoraTurning")
+        .Options(CheckboxOptions()
+                     .Tooltip("During Zora Link's fast swim (holding A), he turns about 75% faster.")
+                     .DefaultValue(true));
+    AddWidget(path, "Zora Quick Dives", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwimOverhaul.ZoraDiving")
+        .Options(CheckboxOptions()
+                     .Tooltip("During Zora Link's fast swim, he tilts down to dive and up to surface about twice as "
+                              "fast when you push the stick.")
+                     .DefaultValue(true));
+
     // Epona Control Overhaul (port of LT_Schmiddy's mod for Majora's Mask: Recompiled)
     path = { "Enhancements", "Epona", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Epona", 2);

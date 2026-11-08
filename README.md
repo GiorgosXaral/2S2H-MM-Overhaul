@@ -97,6 +97,21 @@ The Fierce Deity orb replaces the old sword beam, fires on any normal slash (eve
 - **Bunny Hood Boost**: wearing the Bunny Hood doubles Epona's speed and turn speed.
 - Untick **Enable Epona Control Overhaul** for exactly the original riding.
 
+### Swimming Overhaul
+*Enhancements → Swimming*
+
+| Option | What it does |
+| - | - |
+| **Swim Speed** | 1.0x to 2.0x at the surface (default 1.3x) |
+| **Smooth Strokes** | Link speeds up steadily while you hold the stick, instead of surging on each stroke and slowing in between |
+| **Faster Turning** | Turns about 75% faster, and stops three times quicker when you reverse direction |
+| **Faster Diving** | Sinks about twice as fast while holding A, with full steering underwater instead of half |
+| **Faster Resurfacing** | Rises back to the surface about 50% faster |
+| **Zora Sharper Turning** | During Zora Link's fast swim (holding A), turns about 75% faster |
+| **Zora Quick Dives** | During the fast swim, Zora Link tilts down to dive and up to surface about twice as fast |
+
+How deep Link can dive doesn't change, and 2S2H's own **Faster Swim** (mashing B) still works alongside. Untick **Swimming Overhaul** for exactly the original swimming.
+
 ### Instant Text
 *Enhancements → Time Savers → Instant Text*
 

@@ -13694,9 +13694,36 @@ s32 func_80847190(PlayState* play, Player* this, s32 arg2) {
     return func_80832754(this, (play->bButtonAmmoPlusOne != 0) || func_800B7128(this) || func_8082EF20(this));
 }
 
+// #region 2S2H-MM-Overhaul [Enhancement] Swimming Overhaul
+// Every option is on by default; the master switch turns all of them off at once.
+static s32 SwimOverhaul_Enabled(void) {
+    return CVarGetInteger("gEnhancements.SwimOverhaul.Enabled", 1);
+}
+
+static s32 SwimOverhaul_Option(const char* cvar) {
+    return SwimOverhaul_Enabled() && CVarGetInteger(cvar, 1);
+}
+
+static f32 SwimOverhaul_SpeedMult(void) {
+    return CLAMP(CVarGetFloat("gEnhancements.SwimOverhaul.Speed", 1.3f), 1.0f, 2.0f);
+}
+
+// How hard Link brakes when the stick points behind him (vanilla: 1.0 per frame).
+static f32 SwimOverhaul_ReverseBrake(void) {
+    return SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterTurning") ? 3.0f : 1.0f;
+}
+// #endregion
+
 void func_8084748C(Player* this, f32* speed, f32 speedTarget, s16 yawTarget) {
     f32 incrStep = this->skelAnime.curFrame - 10.0f;
     f32 maxSpeed = (R_RUN_SPEED_LIMIT / 100.0f) * 0.8f;
+    // 2S2H-MM-Overhaul: the speed bonus and Smooth Strokes only apply to horizontal swimming. The same function
+    // also drives velocity.y (diving and surfacing), which keeps the vanilla calculation.
+    const s32 overhaul = SwimOverhaul_Enabled() && (speed != &this->actor.velocity.y);
+    const f32 mult = overhaul ? SwimOverhaul_SpeedMult() : 1.0f;
+
+    maxSpeed *= mult;
+    speedTarget *= mult;
 
     if (GameInteractor_Should(VB_SPEED_MODIFIER_SWIM, true, &incrStep, &maxSpeed, speed, &speedTarget)) {
 
@@ -13704,7 +13731,11 @@ void func_8084748C(Player* this, f32* speed, f32 speedTarget, s16 yawTarget) {
             *speed = maxSpeed;
         }
 
-        if ((0.0f < incrStep) && (incrStep < 16.0f)) {
+        if (overhaul && SwimOverhaul_Option("gEnhancements.SwimOverhaul.SmoothStrokes")) {
+            // Accelerate steadily while the stick is held, instead of only during frames 10-26 of each stroke
+            // and drifting to a stop in between.
+            incrStep = 0.6f * mult;
+        } else if ((0.0f < incrStep) && (incrStep < 16.0f)) {
             incrStep = fabsf(incrStep) * 0.5f;
         } else {
             speedTarget = 0.0f;
@@ -13712,7 +13743,10 @@ void func_8084748C(Player* this, f32* speed, f32 speedTarget, s16 yawTarget) {
         }
         Math_AsymStepToF(speed, speedTarget * 0.8f, incrStep, (fabsf(*speed) * 0.02f) + 0.05f);
     }
-    Math_ScaledStepToS(&this->yaw, yawTarget, 0x640); // 1 ESS turn, also one frame of first-person rotation
+    Math_ScaledStepToS(&this->yaw, yawTarget,
+                       (overhaul && SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterTurning"))
+                           ? 0xAF0
+                           : 0x640); // 1 ESS turn, also one frame of first-person rotation
 }
 
 void func_808475B4(Player* this) {
@@ -14014,8 +14048,24 @@ void func_808481CC(PlayState* play, Player* this, f32 arg2) {
     s16 yawTarget;
 
     Player_GetMovementSpeedAndYaw(this, &speedTarget, &yawTarget, SPEED_MODE_LINEAR, play);
-    func_8084748C(this, &this->speedXZ, speedTarget / 2.0f, yawTarget);
+    // 2S2H-MM-Overhaul: Faster Diving gives full steering underwater (vanilla: half)
+    func_8084748C(this, &this->speedXZ,
+                  SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterDiving") ? speedTarget : (speedTarget / 2.0f),
+                  yawTarget);
     func_8084748C(this, &this->actor.velocity.y, arg2, this->yaw);
+}
+
+// 2S2H-MM-Overhaul: steady vertical movement for Faster Diving / Faster Resurfacing, instead of vanilla's
+// per-stroke surges. Horizontal steering works as in func_808481CC.
+static void SwimOverhaul_DiveMove(PlayState* play, Player* this, f32 targetVelY, f32 stepY) {
+    f32 speedTarget;
+    s16 yawTarget;
+
+    Player_GetMovementSpeedAndYaw(this, &speedTarget, &yawTarget, SPEED_MODE_LINEAR, play);
+    func_8084748C(this, &this->speedXZ,
+                  SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterDiving") ? speedTarget : (speedTarget / 2.0f),
+                  yawTarget);
+    Math_StepToF(&this->actor.velocity.y, targetVelY, stepY);
 }
 
 void func_80848250(PlayState* play, Player* this) {
@@ -17302,7 +17352,7 @@ void Player_Action_54(Player* this, PlayState* play) {
 
             if (speedTarget != 0.0f) {
                 if ((ABS_ALT(BINANG_SUB(this->actor.shape.rot.y, yawTarget)) > 0x6000) &&
-                    !Math_StepToF(&this->speedXZ, 0.0f, 1.0f)) {
+                    !Math_StepToF(&this->speedXZ, 0.0f, SwimOverhaul_ReverseBrake())) {
                     return;
                 }
 
@@ -17347,6 +17397,10 @@ void func_80850BF8(Player* this, f32 arg1) {
     temp_fv0 = Math_CosS(stickX * 0x10E);
 
     temp_ft0 = (((stickX >= 0) ? 1 : -1) * (1.0f - temp_fv0) * -1100.0f);
+    // 2S2H-MM-Overhaul: Zora Sharper Turning turns about 75% faster during the fast swim
+    if (SwimOverhaul_Option("gEnhancements.SwimOverhaul.ZoraTurning")) {
+        temp_ft0 = (s16)(temp_ft0 * 1.75f);
+    }
     temp_ft0 = CLAMP(temp_ft0, -0x1F40, 0x1F40);
 
     this->yaw += temp_ft0;
@@ -17440,7 +17494,12 @@ void Player_Action_56(Player* this, PlayState* play) {
         if ((this->unk_AAA >= -0x1555) && (this->actor.depthInWater < (this->ageProperties->unk_24 + 10.0f))) {
             sp3E = CLAMP_MIN(sp3E, 0x7D0);
         }
-        Math_SmoothStepToS(&this->unk_AAA, sp3E, 4, 0xFA0, 0x190);
+        // 2S2H-MM-Overhaul: Zora Quick Dives makes Zora Link pitch down and up about twice as fast
+        if (SwimOverhaul_Option("gEnhancements.SwimOverhaul.ZoraDiving")) {
+            Math_SmoothStepToS(&this->unk_AAA, sp3E, 2, 0x1770, 0x190);
+        } else {
+            Math_SmoothStepToS(&this->unk_AAA, sp3E, 4, 0xFA0, 0x190);
+        }
 
         // X
         sp42 = stickX * 0x64;
@@ -17568,7 +17627,8 @@ void Player_Action_59(Player* this, PlayState* play) {
                 ((this->skelAnime.curFrame >= 22.0f) && !CHECK_BTN_ALL(sPlayerControlInput->cur.button, BTN_A))) {
                 func_8083B798(play, this);
             } else if (PlayerAnimation_OnFrame(&this->skelAnime, 20.0f)) {
-                this->actor.velocity.y = -2.0f;
+                this->actor.velocity.y =
+                    SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterDiving") ? -3.0f : -2.0f;
             }
             Player_DecelerateToZero(this);
         } else {
@@ -17577,7 +17637,12 @@ void Player_Action_59(Player* this, PlayState* play) {
 
             if (CHECK_BTN_ALL(sPlayerControlInput->cur.button, BTN_A) && !Player_ActionHandler_2(this, play) &&
                 !(this->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && (this->actor.depthInWater < 120.0f)) {
-                func_808481CC(play, this, -2.0f);
+                // 2S2H-MM-Overhaul: Faster Diving sinks steadily at twice the vanilla rate
+                if (SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterDiving")) {
+                    SwimOverhaul_DiveMove(play, this, -4.0f, 0.4f);
+                } else {
+                    func_808481CC(play, this, -2.0f);
+                }
             } else {
                 this->av1.actionVar1++;
                 Player_Anim_PlayLoopSlowMorph(play, this, &gPlayerAnim_link_swimer_swim_wait);
@@ -17607,7 +17672,18 @@ void Player_Action_59(Player* this, PlayState* play) {
         Math_ScaledStepToS(&this->unk_AAA, -0x2710, 0x320);
 
         var_fv1 = CLAMP_MAX(var_fv1, 8.0f);
-        func_808481CC(play, this, var_fv1);
+        // 2S2H-MM-Overhaul: Faster Resurfacing rises steadily about 50% faster, easing off near the surface
+        // so Link doesn't shoot out of the water
+        if (SwimOverhaul_Option("gEnhancements.SwimOverhaul.FasterResurfacing")) {
+            f32 riseVelY = CLAMP(var_fv1 * 1.5f, 6.0f, 10.0f);
+
+            if ((this->actor.depthInWater < 80.0f) && (riseVelY > 6.0f)) {
+                riseVelY = 6.0f;
+            }
+            SwimOverhaul_DiveMove(play, this, riseVelY, 0.6f);
+        } else {
+            func_808481CC(play, this, var_fv1);
+        }
     }
 }
 
