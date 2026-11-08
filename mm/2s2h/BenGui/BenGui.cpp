@@ -24,6 +24,7 @@
 
 #include "Enhancements/Trackers/ItemTracker/ItemTracker.h"
 #include "Enhancements/Trackers/ItemTracker/ItemTrackerSettings.h"
+#include "Enhancements/ThreadsOfTime/ThreadsOfTimeWindow.h"
 #include "Enhancements/Trackers/DisplayOverlay.h"
 #include "Enhancements/Trackers//TimeSplits/Timesplits.h"
 #include "Enhancements/Trackers/TimeSplits/TimesplitsSettings.h"
@@ -64,6 +65,7 @@ std::shared_ptr<Rando::CheckTracker::CheckTrackerWindow> mRandoCheckTrackerWindo
 std::shared_ptr<Rando::CheckTracker::SettingsWindow> mRandoCheckTrackerSettingsWindow;
 std::shared_ptr<ItemTrackerWindow> mItemTrackerWindow;
 std::shared_ptr<ItemTrackerSettingsWindow> mItemTrackerSettingsWindow;
+std::shared_ptr<ThreadsOfTimeWindow> mThreadsOfTimeWindow;
 std::shared_ptr<DisplayOverlayWindow> mDisplayOverlayWindow;
 std::shared_ptr<TimesplitsWindow> mTimesplitsWindow;
 std::shared_ptr<TimesplitsSettingsWindow> mTimesplitsSettingsWindow;
@@ -155,6 +157,10 @@ void SetupGuiElements() {
                                                                              "Item Tracker Settings", ImVec2(800, 400));
     gui->AddGuiWindow(mItemTrackerSettingsWindow);
 
+    mThreadsOfTimeWindow =
+        std::make_shared<ThreadsOfTimeWindow>("gWindows.ThreadsOfTime", "Threads of Time", ImVec2(560, 700));
+    gui->AddGuiWindow(mThreadsOfTimeWindow);
+
     mDisplayOverlayWindow = std::make_shared<DisplayOverlayWindow>("gWindows.DisplayOverlay", "Display Overlay");
     gui->AddGuiWindow(mDisplayOverlayWindow);
 
@@ -212,6 +218,7 @@ void Destroy() {
     mModMenuWindow = nullptr;
     mItemTrackerWindow = nullptr;
     mItemTrackerSettingsWindow = nullptr;
+    mThreadsOfTimeWindow = nullptr;
     mInputViewer = nullptr;
     mInputViewerSettings = nullptr;
 }

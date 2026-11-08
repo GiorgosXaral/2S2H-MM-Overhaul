@@ -1956,6 +1956,24 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.SecretDetection.Rupees")
         .Options(CheckboxOptions().Tooltip("White sparkles: Rupees you can't see until you pick them up.").DefaultValue(true));
 
+    // Threads of Time
+    path = { "Enhancements", "Threads of Time", SECTION_COLUMN_1 };
+    AddSidebarEntry("Enhancements", "Threads of Time", 1);
+    AddWidget(path, "Threads of Time", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Open Threads of Time", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.ThreadsOfTime")
+        .WindowName("Threads of Time")
+        .Options(ButtonOptions().Tooltip(
+            "A journal of your adventure: the Remains, masks and key items you have, step-by-step directions for "
+            "what to do next, which steps have to be redone after the Song of Time, the day and time of this "
+            "cycle, side quests (all 24 masks, Anju & Kafei, Great Fairies, Spider Houses) and your collection. "
+            "Milestones still ahead stay veiled unless you choose to see the whole road."));
+    AddWidget(path, "Show the whole road", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.ThreadsOfTime.ShowWholeRoad")
+        .Options(CheckboxOptions()
+                     .Tooltip("Show the real names and directions of every milestone still ahead (spoilers).")
+                     .DefaultValue(false));
+
     // Epona Control Overhaul (port of LT_Schmiddy's mod for Majora's Mask: Recompiled)
     path = { "Enhancements", "Epona", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Epona", 2);

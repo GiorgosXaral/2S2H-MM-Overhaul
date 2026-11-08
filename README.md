@@ -1,6 +1,6 @@
 # 2S2H-MM-Overhaul
 
-A modified version of [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian), the PC port of *The Legend of Zelda: Majora's Mask*, based on [lightmanLP's mouse-support build M3.1.0](https://github.com/lightmanLP/2ship2harkinian/releases/tag/M3.1.0). It adds tougher and smarter bosses, minibosses and enemies, sword projectiles, and better Epona controls.
+A modified version of [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian), the PC port of *The Legend of Zelda: Majora's Mask*, based on [lightmanLP's mouse-support build M3.1.0](https://github.com/lightmanLP/2ship2harkinian/releases/tag/M3.1.0). It adds tougher and smarter bosses, minibosses and enemies, sword projectiles, better Epona controls, a swimming overhaul, secret detection, instant text, and Threads of Time, an in-game guide to your journey.
 
 Every change can be switched on or off in the in-game menu (press **F1** for the menu bar). They're **on by default**; turning one off gives you the original behavior back.
 
@@ -134,6 +134,23 @@ Undiscovered secrets near Link give off sparkles, and the colour tells you what 
 - Each text box appears complete at once instead of being typed out. You still press A to go to the next box.
 - Timed pauses in the middle of a box still pause, sounds inside the text still play, and Ocarina prompts and choices work as usual.
 - Untick **Instant Text** to go back to the normal typing effect (or 2S2H's own **Fast Text**).
+
+### Threads of Time
+*Enhancements → Threads of Time → Open Threads of Time*
+
+A journal window that tells you where to go and what to do next, so you don't need an online guide. It reads your save file and updates as you play.
+
+- **The Tapestry**: the four Remains, the transformation masks and the key items. Items you don't have yet are shown faded.
+- **This Cycle**: the day and time, how long until the moon falls, and your bank balance. It also reminds you what the Song of Time takes away.
+- **Next Objective**: your current goal, broken into detailed steps with directions, days and times. Steps you've done are ticked, and the next one is highlighted.
+- **[each cycle] tags**: mark steps the Song of Time undoes, such as keys, kegs, bottled items and people you've helped. Masks, songs, items and Remains are permanent. A milestone is only marked done once you have something permanent from it.
+- **The Road**: 8 milestones, from the First Three Days through the four temples and Ikana to the Moon. Milestones still ahead show only a vague hint unless you tick **Show the whole road**.
+- **Side Threads**:
+  - all 24 masks, with where and when to get each one
+  - Anju & Kafei, step by step with days and times
+  - the five Great Fairies and their rewards
+  - both Spider Houses
+- **Collection**: masks, hearts, songs, Owl Statues, the Bombers' Notebook, and this cycle's Stray Fairies and Gold Skulltulas.
 
 ---
 
