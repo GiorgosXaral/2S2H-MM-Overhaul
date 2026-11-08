@@ -1661,6 +1661,13 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Dialogue.FastText")
         .Options(
             CheckboxOptions().Tooltip("Speeds up text rendering, and enables holding of B progress to next message."));
+    AddWidget(path, "Instant Text", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Dialogue.InstantText")
+        .Options(CheckboxOptions()
+                     .Tooltip("Each text box appears complete at once instead of being typed out. You still press "
+                              "A to go to the next box.\n\nTimed pauses in the middle of a box still pause, sounds "
+                              "inside the text still play, and Ocarina prompts and choices work as usual.")
+                     .DefaultValue(true));
     AddWidget(path, "Auto Bombers' Code", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dialogue.AutoBombersCode")
         .Options(CheckboxOptions().Tooltip("Automatically fill in the Bombers' code once you've got the notebook."));

@@ -984,6 +984,27 @@ void Message_DrawTextNES(PlayState* play, Gfx** gfxP, u16 textDrawPos) {
         }
     }
 
+    // #region 2S2H-MM-Overhaul [Enhancement] Instant Text: reveal everything up to the next stop at once.
+    // Timed pauses (MESSAGE_DELAY) and sounds inside the text (MESSAGE_SFX) only act when the text reaches
+    // them exactly, so stop there; everything else (end, box breaks, choices, fades) acts on its own.
+    if ((msgCtx->textDelayTimer == 0) && CVarGetInteger("gEnhancements.Dialogue.InstantText", 1)) {
+        s32 stop;
+
+        for (stop = i; stop < msgCtx->decodedTextLen; stop++) {
+            if (((u8)msgCtx->decodedBuffer.schar[stop] == MESSAGE_DELAY) ||
+                ((u8)msgCtx->decodedBuffer.schar[stop] == MESSAGE_SFX)) {
+                break;
+            }
+        }
+        msgCtx->textDrawPos = stop + 1;
+        if (msgCtx->msgMode == MSGMODE_9) {
+            msgCtx->msgMode = MSGMODE_TEXT_DISPLAYING;
+        }
+        *gfxP = gfx;
+        return;
+    }
+    // #endregion
+
     if (msgCtx->textDelayTimer == 0) {
         msgCtx->textDrawPos = i + (CVarGetInteger("gEnhancements.Dialogue.FastText", 0) ? 10 : 1);
         msgCtx->textDelayTimer = 0;

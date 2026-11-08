@@ -97,6 +97,13 @@ The Fierce Deity orb replaces the old sword beam, fires on any normal slash (eve
 - **Bunny Hood Boost**: wearing the Bunny Hood doubles Epona's speed and turn speed.
 - Untick **Enable Epona Control Overhaul** for exactly the original riding.
 
+### Instant Text
+*Enhancements → Time Savers → Instant Text*
+
+- Each text box appears complete at once instead of being typed out. You still press A to go to the next box.
+- Timed pauses in the middle of a box still pause, sounds inside the text still play, and Ocarina prompts and choices work as usual.
+- Untick **Instant Text** to go back to the normal typing effect (or 2S2H's own **Fast Text**).
+
 ---
 
 ## How to play (Windows)
