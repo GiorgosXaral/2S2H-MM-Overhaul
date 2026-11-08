@@ -347,7 +347,7 @@ void ThreadsOfTimeWindow::DrawElement() {
     bool revealAll = CVarGetInteger(TOT_CVAR_WHOLE_ROAD, 0) != 0;
     if (ImGui::Checkbox("Show the whole road", &revealAll)) {
         CVarSetInteger(TOT_CVAR_WHOLE_ROAD, revealAll ? 1 : 0);
-        Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Reveal the names of every milestone still ahead (spoilers).");
