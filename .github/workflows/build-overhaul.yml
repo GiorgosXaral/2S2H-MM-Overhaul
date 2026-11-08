@@ -1,0 +1,221 @@
+# Builds 2S2H-MM-Overhaul (lightmanLP's 2 Ship 2 Harkinian M3.1.0 with mouse support, plus the Boss,
+# Twinmold, Epona, Sword Projectile and Miniboss & Enemy overhauls built in) for Windows, straight from
+# this repository.
+#
+# Runs on every push to main and from the Actions tab ("Run workflow"). The finished build is the
+# "2s2h-mm-overhaul" artifact: a complete Windows game folder (2ship.exe, 2ship.o2r,
+# gamecontrollerdb.txt, assets/ ...), packaged like the official release. Players need only this
+# folder and their own Majora's Mask ROM; mm.o2r is extracted from the ROM on first launch.
+name: build-2s2h-mm-overhaul
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - name: Keep LF line endings
+      run: git config --global core.autocrlf false
+    - name: Checkout this repo
+      uses: actions/checkout@v6
+      with:
+        submodules: true
+        path: 2ship
+    - name: Install ninja
+      run: |
+        choco install ninja -y
+        Remove-Item -Path "C:\ProgramData\Chocolatey\bin\ccache.exe" -Force -ErrorAction SilentlyContinue
+    - name: Configure Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+    # Get vcpkg ready before CMake does:
+    # - Pinned to a fixed vcpkg version (2026-06-18) so every build uses the same library
+    #   versions. Newer vcpkg recipes for fmt and spdlog download patches from GitHub
+    #   commit pages ("/commit/<sha>.patch"), which GitHub answers with HTTP 504 for
+    #   Actions machines, breaking every build. This version has none of those.
+    #   CMake's "auto-update" of vcpkg does nothing on a pinned (detached) checkout.
+    # - A failed vcpkg.exe download is retried, and if it keeps failing, the vcpkg.exe
+    #   that comes preinstalled on GitHub's Windows machines is used instead.
+    - name: Prepare vcpkg
+      working-directory: 2ship
+      shell: pwsh
+      env:
+        VCPKG_COMMIT: 17216e045521bdb88362d4971e20cd0a487ca3ef
+      run: |
+        foreach ($try in 1..3) {
+          if (Test-Path vcpkg/README.md) { break }
+          Remove-Item -Recurse -Force vcpkg -ErrorAction SilentlyContinue
+          git init -q vcpkg
+          git -C vcpkg fetch --depth 1 https://github.com/Microsoft/vcpkg.git $env:VCPKG_COMMIT
+          git -C vcpkg checkout -q FETCH_HEAD
+          if (-not (Test-Path vcpkg/README.md)) { Start-Sleep -Seconds 20 }
+        }
+        if (-not (Test-Path vcpkg/README.md)) { Write-Error "Could not clone vcpkg"; exit 1 }
+        foreach ($try in 1..3) {
+          if (Test-Path vcpkg/vcpkg.exe) { break }
+          Write-Host "=== vcpkg bootstrap attempt $try of 3 ==="
+          & vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          if (-not (Test-Path vcpkg/vcpkg.exe)) { Start-Sleep -Seconds 20 }
+        }
+        if (-not (Test-Path vcpkg/vcpkg.exe)) {
+          Write-Host "Download kept failing; using the runner's preinstalled vcpkg.exe"
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" vcpkg/vcpkg.exe
+        }
+        & vcpkg/vcpkg.exe version
+        exit 0
+    # Keep downloaded files and compiled libraries between builds. Restored here and saved
+    # at the end of EVERY run (even a failed one), so each retry continues where the last
+    # one stopped instead of downloading and compiling everything again.
+    - name: Restore library cache
+      id: libcache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/AppData/Local/vcpkg/archives
+          2ship/vcpkg/downloads
+        key: vcpkg-${{ runner.os }}-17216e04-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          vcpkg-${{ runner.os }}-17216e04-
+    # glew is the only library vcpkg gets from GitHub "release downloads", which GitHub
+    # keeps answering with HTTP 503/504 for Actions machines. Fetch it ahead of time with
+    # long retries, falling back to GLEW's SourceForge mirror, and check its SHA512 against
+    # vcpkg's recipe. vcpkg then finds the file already downloaded and skips its own try.
+    - name: Prefetch glew
+      working-directory: 2ship
+      shell: pwsh
+      run: |
+        $file = 'vcpkg/downloads/glew-2.3.1.tgz'
+        $sha512 = 'cb4caecf32ec0f180c2691dc7769ffc99571c64f259a2663a2b80e788f1c2fd5362c59e0caaeefed6fb78a4070366d244666a657358049b09071b59fae2377e0'
+        $urls = @(
+          'https://github.com/nigels-com/glew/releases/download/glew-2.3.1/glew-2.3.1.tgz',
+          'https://downloads.sourceforge.net/project/glew/glew/2.3.1/glew-2.3.1.tgz'
+        )
+        New-Item -ItemType Directory -Force -Path vcpkg/downloads | Out-Null
+        function Test-Glew { (Test-Path $file) -and ((Get-FileHash $file -Algorithm SHA512).Hash.ToLower() -eq $sha512) }
+        if (Test-Glew) { Write-Host 'glew already downloaded (from cache)'; exit 0 }
+        foreach ($round in 1..4) {
+          foreach ($url in $urls) {
+            Write-Host "=== Round $round of 4: $url ==="
+            curl.exe -fL --retry 3 --retry-all-errors --retry-delay 10 --connect-timeout 30 -o $file $url
+            if (Test-Glew) { Write-Host 'glew downloaded and verified'; exit 0 }
+            Remove-Item $file -Force -ErrorAction SilentlyContinue
+          }
+          Start-Sleep -Seconds 45
+        }
+        Write-Host '::warning::Could not prefetch glew; vcpkg will try once more on its own'
+        exit 0
+    - name: Build 2ship.exe
+      working-directory: 2ship
+      env:
+        VCPKG_ROOT: ${{ github.workspace }}/2ship/vcpkg
+      shell: pwsh
+      # Setup downloads ~20 libraries from GitHub, which keeps failing some downloads with
+      # HTTP 503/504. Finished libraries stay installed between attempts, so each attempt
+      # gets further; retry up to 10 times with a pause, starting only the build folder fresh.
+      run: |
+        $ok = $false
+        foreach ($try in 1..10) {
+          Write-Host "=== Configure attempt $try of 10 ==="
+          cmake -S . -B build-windows -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_BUILD_TYPE:STRING=Release
+          if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+          Remove-Item -Recurse -Force build-windows -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 90
+        }
+        if (-not $ok) { Write-Error "Configure failed 10 times"; exit 1 }
+
+        # libultraship downloads stb_image.h during configure without checking the result,
+        # so a failed GitHub download leaves a broken file and compiling fails later
+        # ("stbi_image_free: identifier not found"). Check it and re-fetch if needed.
+        $stb = 'build-windows/_deps/stb/stb_image.h'
+        $stbUrls = @(
+          'https://raw.githubusercontent.com/nothings/stb/0bc88af4de5fb022db643c2d8e549a0927749354/stb_image.h',
+          'https://cdn.jsdelivr.net/gh/nothings/stb@0bc88af4de5fb022db643c2d8e549a0927749354/stb_image.h'
+        )
+        function Test-Stb { (Test-Path $stb) -and ((Get-Item $stb).Length -gt 100000) -and (Select-String -Path $stb -SimpleMatch 'stbi_image_free' -Quiet) }
+        foreach ($round in 1..4) {
+          if (Test-Stb) { break }
+          foreach ($url in $stbUrls) {
+            Write-Host "stb_image.h is missing or broken; downloading from $url"
+            curl.exe -fsSL --retry 3 --retry-all-errors --retry-delay 10 -o $stb $url
+            if (Test-Stb) { break }
+          }
+          if (-not (Test-Stb)) { Start-Sleep -Seconds 30 }
+        }
+        if (-not (Test-Stb)) { Write-Error "Could not get a valid stb_image.h"; exit 1 }
+        Write-Host "stb_image.h OK ($((Get-Item $stb).Length) bytes)"
+
+        cmake --build build-windows --config Release --parallel 4
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Save library cache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/AppData/Local/vcpkg/archives
+          2ship/vcpkg/downloads
+        key: ${{ steps.libcache.outputs.cache-primary-key }}
+    # 2ship.o2r is 2 Ship 2 Harkinian's own resource pack (menus, fonts, shaders, extra
+    # textures). It is built from files in this repo; no ROM is involved.
+    - name: Generate 2ship.o2r
+      working-directory: 2ship
+      shell: pwsh
+      run: |
+        cmake --build build-windows --config Release --target Generate2ShipOtr
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not (Test-Path build-windows/mm/2ship.o2r)) { Write-Error "2ship.o2r was not generated"; exit 1 }
+        Get-Item build-windows/mm/2ship.o2r | Format-List Name, Length
+    # CMake downloads the controller mappings while configuring, but ignores a failed
+    # download. Make sure the file is there, retrying if needed, so the package is complete.
+    - name: Make sure gamecontrollerdb.txt is present
+      working-directory: 2ship
+      shell: pwsh
+      run: |
+        $file = 'build-windows/gamecontrollerdb.txt'
+        $urls = @(
+          'https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt',
+          'https://cdn.jsdelivr.net/gh/mdqinc/SDL_GameControllerDB@master/gamecontrollerdb.txt'
+        )
+        foreach ($try in 1..6) {
+          if ((Test-Path $file) -and (Get-Item $file).Length -gt 10000) { break }
+          $url = $urls[($try - 1) % 2]
+          Write-Host "=== Download attempt $try of 6: $url ==="
+          curl.exe -fsSL --retry 3 --retry-all-errors --retry-delay 10 -o $file $url
+          if (-not ((Test-Path $file) -and (Get-Item $file).Length -gt 10000)) { Start-Sleep -Seconds 30 }
+        }
+        if (-not ((Test-Path $file) -and (Get-Item $file).Length -gt 10000)) { Write-Error "Could not get gamecontrollerdb.txt"; exit 1 }
+        Get-Item $file | Format-List Name, Length
+    # Package the game folder the same way the official release does (cpack): 2ship.exe,
+    # 2ship.o2r, gamecontrollerdb.txt, the assets folder used to extract mm.o2r from the
+    # player's ROM on first launch, readme.txt, and debug symbols.
+    - name: Package game folder
+      working-directory: 2ship
+      shell: pwsh
+      run: |
+        Push-Location build-windows
+        cpack
+        $code = $LASTEXITCODE
+        Pop-Location
+        if ($code -ne 0) { exit $code }
+        $zip = Get-ChildItem -Path . -Recurse -Filter *.zip -File |
+               Where-Object { $_.FullName -match '[\\/]_packages[\\/]' } | Select-Object -First 1
+        if (-not $zip) { Write-Error "cpack produced no zip"; exit 1 }
+        Write-Host "Package: $($zip.FullName)"
+        Expand-Archive -Path $zip.FullName -DestinationPath ../out -Force
+        # Some cpack setups put everything in one top-level folder; flatten it if so.
+        $items = Get-ChildItem ../out
+        if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
+          Get-ChildItem $items[0].FullName -Force | Move-Item -Destination ../out
+          Remove-Item $items[0].FullName -Recurse -Force
+        }
+        $missing = @('2ship.exe', '2ship.o2r', 'gamecontrollerdb.txt', 'assets') | Where-Object { -not (Test-Path "../out/$_") }
+        Get-ChildItem ../out | Format-Table Name, Length
+        if ($missing) { Write-Error "Package is missing: $($missing -join ', ')"; exit 1 }
+    - name: Upload game folder
+      uses: actions/upload-artifact@v7
+      with:
+        name: 2s2h-mm-overhaul
+        path: out
+        if-no-files-found: error
