@@ -2,6 +2,7 @@
 #define Z_BOSS_01_H
 
 #include "global.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 #include "assets/objects/object_boss01/object_boss01.h"
 
 struct Boss01;
@@ -150,6 +151,7 @@ typedef struct Boss01 {
     /* 0xAD8 */ u8 drawDmgEffType; 
     /* 0xAD9 */ u8 drawDmgEffState;
     /* 0xADA */ s16 drawDmgEffTimer;
-} Boss01; // size = 0xADC
+    BoOrb boOrb; // Boss Overhaul: state of an orb instance
+} Boss01; // size = 0xADC (vanilla)
 
 #endif // Z_BOSS_01_H

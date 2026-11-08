@@ -58,6 +58,7 @@
 #include "objects/object_water_effect/object_water_effect.h"
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -78,6 +79,9 @@
 #define WATER_HEIGHT 430.0f
 
 void Boss03_Init(Actor* thisx, PlayState* play2);
+// Boss Overhaul: water bullets
+void Boss03_BoOrbUpdate(Actor* thisx, PlayState* play);
+void Boss03_BoOrbDraw(Actor* thisx, PlayState* play);
 void Boss03_Destroy(Actor* thisx, PlayState* play);
 void Boss03_Update(Actor* thisx, PlayState* play2);
 void Boss03_Draw(Actor* thisx, PlayState* play);
@@ -455,6 +459,14 @@ void Boss03_Init(Actor* thisx, PlayState* play2) {
     PlayState* play = play2;
     Vec3f sp70;
 
+    if (this->actor.params == BO_ORB_PARAMS) {
+        // Boss Overhaul: this instance is one of Gyorg's water bullets
+        BoOrb_Init(&this->actor, &this->boOrb, play);
+        this->actor.update = Boss03_BoOrbUpdate;
+        this->actor.draw = Boss03_BoOrbDraw;
+        return;
+    }
+
     if (CHECK_WEEKEVENTREG(WEEKEVENTREG_CLEARED_GREAT_BAY_TEMPLE)) {
         Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_DOOR_WARP1, 0.0f, PLATFORM_HEIGHT, 200.0f, 0, 0,
                            0, ENDOORWARP1_FF_1);
@@ -514,7 +526,8 @@ void Boss03_Init(Actor* thisx, PlayState* play2) {
 
     this->actor.attentionRangeType = ATTENTION_RANGE_5;
     this->actor.colChkInfo.mass = MASS_HEAVY;
-    this->actor.colChkInfo.health = 10;
+    this->actor.colChkInfo.health = BO_HP(10);
+    this->boSpitTimer = 100;
 
     Collider_InitAndSetJntSph(play, &this->headCollider, &this->actor, &sHeadJntSphInit, this->headColliderElements);
     Collider_InitAndSetJntSph(play, &this->bodyCollider, &this->actor, &sBodyJntSphInit, this->bodyColliderElements);
@@ -537,6 +550,78 @@ void Boss03_Init(Actor* thisx, PlayState* play2) {
 
 void Boss03_Destroy(Actor* thisx, PlayState* play) {
     Boss03* this = (Boss03*)thisx;
+
+    if (this->actor.params == BO_ORB_PARAMS) {
+        BoOrb_Destroy(&this->actor, &this->boOrb, play);
+    }
+}
+
+void Boss03_BoOrbUpdate(Actor* thisx, PlayState* play) {
+    Boss03* this = (Boss03*)thisx;
+
+    BoOrb_Update(&this->actor, &this->boOrb, play);
+}
+
+void Boss03_BoOrbDraw(Actor* thisx, PlayState* play) {
+    Boss03* this = (Boss03*)thisx;
+
+    BoOrb_Draw(&this->actor, &this->boOrb, play);
+}
+
+/**
+ * Boss Overhaul: while Link stands on the platform, Gyorg bursts a volley of water bullets out of the lake that lob
+ * onto the platform and knock him back, often straight into the water. Three bullets, five once Gyorg is at half health.
+ */
+void Boss03_BoSpitWater(Boss03* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f launchPos;
+    Vec3f targetPos;
+    Vec3f velocity;
+    Actor* orb;
+    s32 i;
+    s32 count;
+
+    if (!BO_ATTACKS_ENABLED()) {
+        return;
+    }
+
+    if (this->boSpitTimer > 0) {
+        this->boSpitTimer--;
+        return;
+    }
+
+    if (!((this->waterHeight < player->actor.world.pos.y) && (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) ||
+        (this->actor.xzDistToPlayer < 300.0f)) {
+        return;
+    }
+
+    count = BO_AT_OR_BELOW_HALF((s8)this->actor.colChkInfo.health, BO_HP(10)) ? 5 : 3;
+
+    launchPos.x = this->actor.world.pos.x;
+    launchPos.y = this->waterHeight + 10.0f;
+    launchPos.z = this->actor.world.pos.z;
+
+    for (i = 0; i < count; i++) {
+        targetPos = player->actor.world.pos;
+        targetPos.y += 20.0f;
+
+        if (i != 0) {
+            targetPos.x += Rand_CenteredFloat(260.0f);
+            targetPos.z += Rand_CenteredFloat(260.0f);
+        }
+
+        BoOrb_ArcVelocity(&launchPos, &targetPos, 36.0f + (i * 5.0f), -1.2f, &velocity);
+        orb = BoOrb_Spawn(play, ACTOR_BOSS_03, BO_ORB_WATER, &launchPos, &velocity);
+
+        if (orb != NULL) {
+            ((Boss03*)orb)->boOrb.gravity = -1.2f;
+        }
+    }
+
+    Actor_Spawn(&play->actorCtx, play, ACTOR_EN_WATER_EFFECT, launchPos.x, this->waterHeight, launchPos.z, 0, 0, 0x78,
+                ENWATEREFFECT_TYPE_GYORG_RIPPLES);
+    Boss03_PlayUnderwaterSfx(&this->actor.projectedPos, NA_SE_EN_KONB_JUMP_OLD);
+    this->boSpitTimer = 150;
 }
 
 /* Start of ActionFuncs section */
@@ -622,6 +707,8 @@ void func_809E34B8(Boss03* this, PlayState* play) {
     Actor_MoveWithoutGravityReverse(&this->actor);
     Math_ApproachS(&this->actor.shape.rot.x, this->actor.world.rot.x, 2, this->unk_274 * 2);
     Math_ApproachS(&this->actor.shape.rot.y, this->actor.world.rot.y, 2, this->unk_274 * 2);
+
+    Boss03_BoSpitWater(this, play);
 
     if (this->workTimer[WORK_TIMER_UNK1_A] == 0) {
         // Player is above water && Player is standing on ground
@@ -1816,7 +1903,7 @@ void Boss03_Damaged(Boss03* this, PlayState* play) {
     Math_ApproachF(&this->actor.world.pos.y, 200.0f, 0.05f, 10.0f);
 
     if (this->workTimer[WORK_TIMER_CURRENT_ACTION] == 0) {
-        if ((s8)this->actor.colChkInfo.health <= 5) {
+        if ((s8)this->actor.colChkInfo.health <= BO_HP(5)) {
             if (!this->hasSpwanedSmallFishes) {
                 this->hasSpwanedSmallFishes++;
                 Boss03_SetupSpawnSmallFishesCutscene(this, play);

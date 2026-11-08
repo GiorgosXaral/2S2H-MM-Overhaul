@@ -14,6 +14,7 @@
 
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -36,6 +37,15 @@ void Boss02_UpdateEffects(PlayState* play);
 void Boss02_DrawEffects(PlayState* play);
 void Boss02_HandleGiantsMaskCutscene(Boss02* this, PlayState* play);
 void func_809DEAC4(Boss02* this, PlayState* play);
+// Boss Overhaul: the twin dragons
+void Boss02_BoShotInit(Boss02* this, PlayState* play);
+void Boss02_BoShotUpdate(Actor* thisx, PlayState* play);
+void Boss02_BoShotDraw(Actor* thisx, PlayState* play);
+void Boss02_BoDragonUpdate(Boss02* this, PlayState* play);
+void Boss02_BoDrawMouth(Boss02* this, PlayState* play);
+void Boss02_BoEruption(Boss02* this, PlayState* play, Vec3f* breachPos);
+f32 Boss02_BoChaseChance(Boss02* this);
+f32 Boss02_BoSpeedScale(Boss02* this);
 
 typedef enum {
     /*  0 */ GIANTS_MASK_CS_STATE_WAITING_FOR_MASK, // Starts the cutscene when the player puts on/takes off the mask.
@@ -593,6 +603,12 @@ void Boss02_Init(Actor* thisx, PlayState* play) {
     s32 i;
     s32 pad[2];
 
+    if (TWINMOLD_GET_TYPE(&this->actor) == BO_TM_SHOT_PARAMS) {
+        // Boss Overhaul: this instance is one of the twin dragons' projectiles
+        Boss02_BoShotInit(this, play);
+        return;
+    }
+
     if (CHECK_WEEKEVENTREG(WEEKEVENTREG_CLEARED_STONE_TOWER_TEMPLE) &&
         (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED)) {
         sBlueWarp = (DoorWarp1*)Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_DOOR_WARP1, 0.0f, 60.0f,
@@ -640,7 +656,18 @@ void Boss02_Init(Actor* thisx, PlayState* play) {
         }
 
         this->actor.colChkInfo.mass = MASS_HEAVY;
-        this->actor.colChkInfo.health = 20;
+        this->actor.colChkInfo.health = BO_HP(20);
+        // Boss Overhaul: the red head is a fire dragon, the blue one an ice dragon. Their attacks are staggered so they
+        // don't open fire together at the start.
+        this->boBreathElement = (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ? BO_TM_FIRE : BO_TM_ICE;
+        this->boBreathCooldown = (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ? 150 : 280;
+        this->boRainCooldown = (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ? 380 : 560;
+        this->boSpeedScale = 1.0f;
+        this->boLastGiantMode = sIsInGiantMode;
+        this->boMouthPos = this->actor.world.pos;
+        Lights_PointNoGlowSetInfo(&this->boLightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
+                                  this->actor.world.pos.z, 0, 0, 0, 0);
+        this->boLightNode = LightContext_InsertLight(play, &play->lightCtx, &this->boLightInfo);
         Actor_SetScale(&this->actor, 0.01f);
         SkelAnime_Init(play, &this->skelAnime, &gTwinmoldHeadSkel, &gTwinmoldHeadFlyAnim, this->jointTable,
                        this->morphTable, TWINMOLD_HEAD_LIMB_MAX);
@@ -669,7 +696,1161 @@ void Boss02_Init(Actor* thisx, PlayState* play) {
     }
 }
 
+#define BO_TM_SHOT_MAX 64
+#define BO_TM_PATCH_MAX 8
+
+static s16 sBoTmShotCount = 0;
+static s16 sBoTmPatchCount = 0;
+
+// [element]: outer glow, its env color, hot core, its env color, arena light
+static Color_RGB8 sBoTmGlowPrim[] = { { 255, 200, 80 }, { 215, 245, 255 } };
+static Color_RGB8 sBoTmGlowEnv[] = { { 255, 50, 0 }, { 30, 130, 255 } };
+static Color_RGB8 sBoTmCorePrim[] = { { 255, 255, 220 }, { 255, 255, 255 } };
+static Color_RGB8 sBoTmCoreEnv[] = { { 255, 170, 40 }, { 150, 220, 255 } };
+static Color_RGB8 sBoTmLight[] = { { 255, 110, 30 }, { 90, 170, 255 } };
+
+static Color_RGBA8 sBoTmIcePrim = { 170, 255, 255, 255 };
+static Color_RGBA8 sBoTmIceEnv = { 0, 50, 100, 255 };
+
 void Boss02_Destroy(Actor* thisx, PlayState* play) {
+    Boss02* this = (Boss02*)thisx;
+
+    if (TWINMOLD_GET_TYPE(&this->actor) == BO_TM_SHOT_PARAMS) {
+        Collider_DestroyCylinder(play, &this->boShot.collider);
+        if (sBoTmShotCount > 0) {
+            sBoTmShotCount--;
+        }
+        if ((this->boShot.kind == BO_TM_SHOT_PATCH) && (sBoTmPatchCount > 0)) {
+            sBoTmPatchCount--;
+        }
+    } else if ((TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ||
+               (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_BLUE)) {
+        LightContext_RemoveLight(play, &play->lightCtx, this->boLightNode);
+        this->boLightNode = NULL;
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * Boss Overhaul: the twin dragons
+ *
+ * Red Twinmold is a fire dragon and Blue Twinmold an ice dragon (as in the original game, the red one is weak to ice
+ * arrows and the blue one to fire arrows). Each of them:
+ *  - Dragon breath: slows down and gathers its element in its jaws (they glow and light up the arena), then pours out
+ *    a long stream of fireballs / frost balls that sweeps after Link with a lag. Fire burns, frost freezes. The stream
+ *    bursts on the floor, the walls and the ruins (hide behind one: the breath doesn't wear them down).
+ *  - Meteor storm (red) / hailstorm (blue): while cruising high above the arena it spits balls into the sky, which come
+ *    back down as meteors / giant icicles on marked spots around Link. They smash ruins.
+ *  - Eruption: whenever it bursts through the sand, a ring of fire / ice is thrown out of the breach.
+ *  - The big attacks leave burning ground (red) or ice spikes (blue) behind for a few seconds.
+ *  - Its body burns / sheds frost as it flies.
+ * The survivor takes its fallen twin's element too: its breath splits into three jets (its own element in the middle,
+ * its twin's on the sides), alternating each time, and its storms mix meteors and icicles.
+ *
+ * Giant's Mask: the arena and Twinmold shrink while Link wears it, but the attacks shrink less and travel faster
+ * relative to the arena, so they stay a threat to giant Link, and they deal their full damage (giant Link normally only
+ * takes a quarter). Twinmold also hunts giant Link more often, attacks more often, and its body hurts twice as much.
+ * --------------------------------------------------------------------------------------------------------------- */
+
+// Size and speed of the dragons' attacks. In the Giant's Mask arena everything else shrinks by 10, these only by 3.
+f32 Boss02_BoFx(void) {
+    return sIsInGiantMode ? 0.3f : 1.0f;
+}
+
+// Giant Link only takes a quarter of the damage he is dealt: the dragons' attacks make up for it.
+u8 Boss02_BoDamage(s32 damage) {
+    if (sIsInGiantMode) {
+        damage *= 4;
+    }
+    return CLAMP_MAX(damage, 0xFF);
+}
+
+s32 Boss02_BoOwnElement(Boss02* this) {
+    return (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ? BO_TM_FIRE : BO_TM_ICE;
+}
+
+// The height of the floor under `pos`, or BGCHECK_Y_MIN outside the arena.
+f32 Boss02_BoFloorY(PlayState* play, Vec3f* pos) {
+    CollisionPoly* poly;
+    Vec3f probe = *pos;
+
+    probe.y = sIsInGiantMode ? 5000.0f : 2000.0f;
+    return BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &probe);
+}
+
+// True during a cutscene: the intro, a twin's death, the Giant's Mask transformation. (Drinking a potion or changing
+// masks doesn't count: the dragons don't wait for Link.)
+s32 Boss02_BoInCutscene(PlayState* play) {
+    return (play->csCtx.state != CS_STATE_IDLE) || (sTwinmoldBattleHandler == NULL) ||
+           (sTwinmoldBattleHandler->unk_1D20 != 0) ||
+           (sTwinmoldBattleHandler->giantsMaskCsState != GIANTS_MASK_CS_STATE_WAITING_FOR_MASK);
+}
+
+// True while the fight is on and this head is alive and out of its intro.
+s32 Boss02_BoCanAttack(Boss02* this, PlayState* play) {
+    return BO_ATTACKS_ENABLED() && (this->unk_0144 < 10) && !Boss02_BoInCutscene(play);
+}
+
+// How likely a head that just rose out of the sand is to chase Link (0.3 in the original game).
+f32 Boss02_BoChaseChance(Boss02* this) {
+    if (!BO_ATTACKS_ENABLED()) {
+        return 0.3f;
+    }
+    if (sIsInGiantMode) {
+        return 0.6f;
+    }
+    return (this->unk_0195 != 0) ? 0.45f : 0.3f;
+}
+
+// Flying speed multiplier (the dragon slows down while it breathes).
+f32 Boss02_BoSpeedScale(Boss02* this) {
+    return (this->boSpeedScale > 0.0f) ? this->boSpeedScale : 1.0f;
+}
+
+// True when `pos` is inside one of the arena's ruins (a pillar or a pyramid).
+s32 Boss02_BoTouchesRuin(PlayState* play, Vec3f* pos, f32 radius) {
+    Actor* actor = play->actorCtx.actorLists[ACTORCAT_BOSS].first;
+
+    for (; actor != NULL; actor = actor->next) {
+        EnTanron5* ruin = (EnTanron5*)actor;
+        f32 dx;
+        f32 dz;
+        f32 reach;
+
+        // (a ruin hit three times is gone: it only lingers, invisible, for a few frames)
+        if ((actor->id != ACTOR_EN_TANRON5) || (actor->update == NULL) ||
+            (TWINMOLD_PROP_GET_TYPE(actor) < TWINMOLD_PROP_TYPE_RUIN_PILLAR_1) ||
+            (TWINMOLD_PROP_GET_TYPE(actor) > TWINMOLD_PROP_TYPE_RUIN_PYRAMID_8) || (ruin->hitCount >= 3)) {
+            continue;
+        }
+
+        dx = pos->x - ruin->collider.dim.pos.x;
+        dz = pos->z - ruin->collider.dim.pos.z;
+        reach = ruin->collider.dim.radius + radius;
+
+        if (((SQ(dx) + SQ(dz)) < SQ(reach)) && (pos->y > (ruin->collider.dim.pos.y - radius)) &&
+            (pos->y < (ruin->collider.dim.pos.y + ruin->collider.dim.height + radius))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// A burst of fire or ice where a ball hits something. `scale` includes Boss02_BoFx. Only "big" bursts (with a sound)
+// leave anything behind: the breath's balls mostly just vanish, there are a lot of them.
+void Boss02_BoBurst(PlayState* play, Vec3f* pos, s32 element, f32 scale, s32 big) {
+    static Vec3f sFlameAccel = { 0.0f, 0.3f, 0.0f };
+
+    if (!big) {
+        return;
+    }
+
+    if (element == BO_TM_FIRE) {
+        EffectSsKFire_Spawn(play, pos, &gZeroVec3f, &sFlameAccel, (s16)(100.0f * scale), 100);
+        SoundSource_PlaySfxAtFixedWorldPos(play, pos, 20, NA_SE_EV_FLAME_IGNITION);
+    } else {
+        Vec3f velocity;
+
+        velocity.x = 0.0f;
+        velocity.y = 1.0f * scale;
+        velocity.z = 0.0f;
+        EffectSsIceSmoke_Spawn(play, pos, &velocity, &gZeroVec3f, (s16)(800.0f * scale));
+        velocity.x = Rand_CenteredFloat(12.0f * scale);
+        velocity.y = (Rand_ZeroFloat(6.0f) + 6.0f) * scale;
+        velocity.z = Rand_CenteredFloat(12.0f * scale);
+        EffectSsEnIce_Spawn(play, pos, 1.6f * scale, &velocity, &gZeroVec3f, &sBoTmIcePrim, &sBoTmIceEnv, 22);
+        SoundSource_PlaySfxAtFixedWorldPos(play, pos, 20, NA_SE_EV_ICE_BROKEN);
+    }
+}
+
+/**
+ * Spawns one of the dragons' projectiles, set up for its kind. Returns NULL when there are already too many.
+ */
+Boss02* Boss02_BoSpawnShot(PlayState* play, s32 kind, s32 element, Vec3f* pos, Vec3f* velocity) {
+    Boss02* shotActor;
+    Boss02BoShot* shot;
+    f32 fx = Boss02_BoFx();
+    s32 damage = 0x10;
+
+    if ((sBoTmShotCount >= BO_TM_SHOT_MAX) || ((kind == BO_TM_SHOT_PATCH) && (sBoTmPatchCount >= BO_TM_PATCH_MAX))) {
+        return NULL;
+    }
+
+    // No burning ground against a ruin: it would wear the ruin down
+    if ((kind == BO_TM_SHOT_PATCH) && Boss02_BoTouchesRuin(play, pos, 110.0f * fx)) {
+        return NULL;
+    }
+
+    shotActor = (Boss02*)Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_02, pos->x, pos->y, pos->z, 0, 0, 0,
+                                     BO_TM_SHOT_PARAMS);
+    if (shotActor == NULL) {
+        return NULL;
+    }
+
+    shot = &shotActor->boShot;
+    shot->kind = kind;
+    shot->element = element;
+    shotActor->actor.velocity = *velocity;
+
+    switch (kind) {
+        case BO_TM_SHOT_BREATH:
+            shot->size = 0.45f;
+            shot->life = 44;
+            shot->hitRadius = 60.0f * fx;
+            break;
+
+        case BO_TM_SHOT_LOB:
+            shot->size = 0.6f;
+            shot->life = 90;
+            shot->hitRadius = 55.0f * fx;
+            break;
+
+        case BO_TM_SHOT_FALLING:
+            shot->size = 1.0f;
+            shot->hitRadius = 180.0f * fx; // the blast
+            shot->target = *pos;
+            shot->leavesPatch = true;
+            damage = 0x18;
+            break;
+
+        case BO_TM_SHOT_PATCH:
+            shot->size = 0.0f;
+            shot->life = 120;
+            shot->hitRadius = 110.0f * fx;
+            sBoTmPatchCount++;
+            damage = (element == BO_TM_FIRE) ? 0x08 : 0x04;
+            // A pool of fire shouldn't restart right under Link's feet if he was just burned by what made it
+            shot->hitCooldown = 12;
+            SoundSource_PlaySfxAtFixedWorldPos(play, pos, 30,
+                                               (element == BO_TM_FIRE) ? NA_SE_EV_FIRE_PILLAR_S : NA_SE_EV_ICE_FREEZE);
+            break;
+
+        default: // BO_TM_SHOT_SPARK
+            shot->size = 0.5f;
+            shot->life = 20;
+            shot->hitRadius = 0.0f;
+            break;
+    }
+
+    // Fire burns, ice freezes. Neither can be blocked with a shield.
+    shotActor->boShot.collider.elem.atDmgInfo.effect = (element == BO_TM_FIRE) ? 1 : 2;
+    shotActor->boShot.collider.elem.atDmgInfo.damage = Boss02_BoDamage(damage);
+
+    return shotActor;
+}
+
+static ColliderCylinderInit sBoTmShotCylinderInit = {
+    {
+        COL_MATERIAL_NONE,
+        AT_ON | AT_TYPE_ENEMY,
+        AC_NONE,
+        OC1_NONE,
+        OC2_TYPE_1,
+        COLSHAPE_CYLINDER,
+    },
+    {
+        ELEM_MATERIAL_UNK0,
+        { DMG_UNBLOCKABLE, 0x01, 0x10 },
+        { 0x00000000, 0x00, 0x00 },
+        ATELEM_ON | ATELEM_SFX_NORMAL,
+        ACELEM_NONE,
+        OCELEM_NONE,
+    },
+    { 60, 120, -60, { 0, 0, 0 } },
+};
+
+void Boss02_BoShotInit(Boss02* this, PlayState* play) {
+    Boss02BoShot* shot = &this->boShot;
+
+    this->actor.flags &= ~(ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE);
+    this->actor.colChkInfo.health = 0;
+    this->actor.gravity = 0.0f;
+    this->actor.velocity = gZeroVec3f;
+    this->actor.room = -1;
+    Actor_SetScale(&this->actor, 0.01f);
+    // Out of the boss list: Twinmold and the Giant's Mask transformation go through it
+    Actor_ChangeCategory(play, &play->actorCtx, &this->actor, ACTORCAT_MISC);
+
+    Collider_InitAndSetCylinder(play, &shot->collider, &this->actor, &sBoTmShotCylinderInit);
+    shot->kind = BO_TM_SHOT_SPARK;
+    shot->life = 1;
+    shot->spin = (s16)Rand_Next();
+    shot->giant = sIsInGiantMode;
+    sBoTmShotCount++;
+
+    this->actor.update = Boss02_BoShotUpdate;
+    this->actor.draw = Boss02_BoShotDraw;
+}
+
+void Boss02_BoShotSetCollider(Boss02* this, f32 radius, f32 height, f32 yShift) {
+    Boss02BoShot* shot = &this->boShot;
+
+    shot->collider.dim.radius = radius;
+    shot->collider.dim.height = height;
+    shot->collider.dim.yShift = yShift;
+    Collider_UpdateCylinder(&this->actor, &shot->collider);
+}
+
+// Breath balls, lobs and sparks: they fly until they hit something.
+void Boss02_BoShotUpdateBall(Boss02* this, PlayState* play) {
+    Boss02BoShot* shot = &this->boShot;
+    f32 fx = Boss02_BoFx();
+    Vec3f prevPos = this->actor.world.pos;
+    Vec3f hitPos;
+    CollisionPoly* poly = NULL;
+    s32 bgId;
+    s32 bigBurst;
+
+    // Hit Link last frame
+    if (shot->collider.base.atFlags & AT_HIT) {
+        shot->collider.base.atFlags &= ~(AT_HIT | AT_BOUNCED);
+        Boss02_BoBurst(play, &this->actor.world.pos, shot->element, fx, true);
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    // The breath's balls burst small and silently, but one in four (there are a lot of them)
+    bigBurst = (shot->kind != BO_TM_SHOT_BREATH) || ((shot->spin & 3) == 0);
+
+    this->actor.velocity.y += shot->gravity;
+    this->actor.world.pos.x += this->actor.velocity.x;
+    this->actor.world.pos.y += this->actor.velocity.y;
+    this->actor.world.pos.z += this->actor.velocity.z;
+    Math_ApproachF(&shot->size, 1.0f, 1.0f, 0.1f);
+    shot->spin += 0x1800;
+
+    if (shot->life > 0) {
+        shot->life--;
+    }
+
+    if (shot->life == 0) {
+        if (shot->kind == BO_TM_SHOT_SPARK) {
+            Boss02_BoBurst(play, &this->actor.world.pos, shot->element, 0.6f * fx, false);
+        }
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    if (shot->kind == BO_TM_SHOT_SPARK) {
+        return; // only for show
+    }
+
+    // The ruins stop it like walls do, without being worn down by it (it bursts before its hitbox can touch one)
+    if (Boss02_BoTouchesRuin(play, &this->actor.world.pos, shot->hitRadius * shot->size)) {
+        Boss02_BoBurst(play, &this->actor.world.pos, shot->element, fx, bigBurst);
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    if (BgCheck_EntityLineTest1(&play->colCtx, &prevPos, &this->actor.world.pos, &hitPos, &poly, true, true, true, true,
+                                &bgId)) {
+        this->actor.world.pos = hitPos;
+        Boss02_BoBurst(play, &hitPos, shot->element, fx, bigBurst);
+
+        // Landed on the floor rather than a wall: the ground burns / freezes
+        if (shot->leavesPatch && (poly != NULL) && (COLPOLY_GET_NORMAL(poly->normal.y) > 0.5f)) {
+            Boss02_BoSpawnShot(play, BO_TM_SHOT_PATCH, shot->element, &hitPos, &gZeroVec3f);
+        }
+
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    Boss02_BoShotSetCollider(this, shot->hitRadius * shot->size, shot->hitRadius * shot->size * 2.0f,
+                             -shot->hitRadius * shot->size);
+    CollisionCheck_SetAT(play, &play->colChkCtx, &shot->collider.base);
+}
+
+// Meteors and icicles: wait for their turn, mark the spot, drop, blast.
+void Boss02_BoShotUpdateFalling(Boss02* this, PlayState* play) {
+    static Vec3f sFlameAccel = { 0.0f, 0.3f, 0.0f };
+    Boss02BoShot* shot = &this->boShot;
+    f32 fx = Boss02_BoFx();
+    f32 height = 1500.0f * fx;
+    Vec3f pos;
+
+    shot->spin += 0x1000;
+
+    switch (shot->phase) {
+        case 0: // waiting for its turn
+            this->actor.world.pos = shot->target;
+            this->actor.world.pos.y += height;
+            if (--shot->life <= 0) {
+                shot->phase = 1;
+                shot->life = 36;
+            }
+            break;
+
+        case 1: // the landing spot is marked
+            if (--shot->life <= 0) {
+                shot->phase = 2;
+                shot->life = 12;
+                SoundSource_PlaySfxAtFixedWorldPos(
+                    play, &shot->target, 20, (shot->element == BO_TM_FIRE) ? NA_SE_EV_COMING_FIRE : NA_SE_EV_ICE_PILLAR_FALL);
+            }
+            break;
+
+        case 2: // falling
+            shot->life--;
+            this->actor.world.pos = shot->target;
+            this->actor.world.pos.y += (height * shot->life) / 12.0f;
+
+            if ((shot->timer % 8) == 0) {
+                pos = this->actor.world.pos;
+                if (shot->element == BO_TM_FIRE) {
+                    EffectSsKFire_Spawn(play, &pos, &gZeroVec3f, &sFlameAccel, (s16)(130.0f * fx), 100);
+                } else {
+                    EffectSsIceSmoke_Spawn(play, &pos, &gZeroVec3f, &gZeroVec3f, (s16)(1000.0f * fx));
+                }
+            }
+
+            if (shot->life <= 0) {
+                Vec3f zero = gZeroVec3f;
+                Color_RGBA8 ringPrim;
+                Color_RGBA8 ringEnv;
+                s32 element = shot->element;
+
+                shot->phase = 3;
+                shot->life = 4;
+                this->actor.world.pos = shot->target;
+                pos = shot->target;
+                pos.y += 30.0f * fx;
+
+                ringPrim.r = sBoTmGlowPrim[element].r;
+                ringPrim.g = sBoTmGlowPrim[element].g;
+                ringPrim.b = sBoTmGlowPrim[element].b;
+                ringPrim.a = 255;
+                ringEnv.r = sBoTmGlowEnv[element].r;
+                ringEnv.g = sBoTmGlowEnv[element].g;
+                ringEnv.b = sBoTmGlowEnv[element].b;
+                ringEnv.a = 0;
+                EffectSsBlast_Spawn(play, &shot->target, &zero, &zero, &ringPrim, &ringEnv, (s16)(300.0f * fx),
+                                    (s16)(900.0f * fx), (s16)(60.0f * fx), 12);
+
+                if (element == BO_TM_FIRE) {
+                    EffectSsBomb2_SpawnLayered(play, &pos, &zero, &zero, (s16)(160.0f * fx), (s16)(25.0f * fx));
+                    SoundSource_PlaySfxAtFixedWorldPos(play, &pos, 40, NA_SE_IT_BOMB_EXPLOSION);
+                } else {
+                    Boss02_BoBurst(play, &pos, BO_TM_ICE, 1.4f * fx, true);
+                    SoundSource_PlaySfxAtFixedWorldPos(play, &pos, 40, NA_SE_IT_EXPLOSION_ICE);
+                }
+                Actor_RequestQuakeAndRumble(&this->actor, play, 3, 6);
+            }
+            break;
+
+        default: // the blast
+            // (it never registers its hitbox on the frame it dies: whatever it hits reads it on the next frame)
+            if (shot->life <= 0) {
+                if (shot->leavesPatch) {
+                    Boss02_BoSpawnShot(play, BO_TM_SHOT_PATCH, shot->element, &shot->target, &gZeroVec3f);
+                }
+                Actor_Kill(&this->actor);
+                return;
+            }
+            shot->life--;
+            Boss02_BoShotSetCollider(this, shot->hitRadius, 150.0f * fx, 0.0f);
+            CollisionCheck_SetAT(play, &play->colChkCtx, &shot->collider.base);
+            return;
+    }
+
+    // The falling ball itself
+    if (shot->phase == 2) {
+        Boss02_BoShotSetCollider(this, 90.0f * fx, 180.0f * fx, -90.0f * fx);
+        CollisionCheck_SetAT(play, &play->colChkCtx, &shot->collider.base);
+    }
+}
+
+// Burning ground / ice spikes.
+void Boss02_BoShotUpdatePatch(Boss02* this, PlayState* play) {
+    Boss02BoShot* shot = &this->boShot;
+    f32 fx = Boss02_BoFx();
+
+    shot->spin += 0x300;
+    Math_ApproachF(&shot->size, 1.0f, 1.0f, 0.15f);
+
+    if (--shot->life <= 0) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    if (shot->hitCooldown > 0) {
+        shot->hitCooldown--;
+    }
+
+    if (shot->collider.base.atFlags & AT_HIT) {
+        shot->collider.base.atFlags &= ~(AT_HIT | AT_BOUNCED);
+
+        if (shot->element == BO_TM_ICE) {
+            // The spikes that froze Link shatter (it stops registering its hitbox the frame before it dies)
+            Boss02_BoBurst(play, &this->actor.world.pos, BO_TM_ICE, fx, true);
+            Actor_Kill(&this->actor);
+            return;
+        }
+        shot->hitCooldown = 40;
+    }
+
+    if ((shot->hitCooldown == 0) && (shot->size > 0.6f) && (shot->life > 10)) {
+        Boss02_BoShotSetCollider(this, shot->hitRadius * shot->size, ((shot->element == BO_TM_FIRE) ? 70.0f : 50.0f) * fx,
+                                 0.0f);
+        CollisionCheck_SetAT(play, &play->colChkCtx, &shot->collider.base);
+    }
+}
+
+void Boss02_BoShotUpdate(Actor* thisx, PlayState* play) {
+    Boss02* this = (Boss02*)thisx;
+    Boss02BoShot* shot = &this->boShot;
+
+    shot->timer++;
+
+    // The arena changed size, or a cutscene started: the attack is gone
+    if ((shot->giant != sIsInGiantMode) || Boss02_BoInCutscene(play)) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    switch (shot->kind) {
+        case BO_TM_SHOT_FALLING:
+            Boss02_BoShotUpdateFalling(this, play);
+            break;
+
+        case BO_TM_SHOT_PATCH:
+            Boss02_BoShotUpdatePatch(this, play);
+            break;
+
+        default:
+            Boss02_BoShotUpdateBall(this, play);
+            break;
+    }
+}
+
+/* Drawing: everything is gameplay_keep (light orb, flame, ice shard, ice smoke, shockwave ring) */
+
+void Boss02_BoDrawGlow(PlayState* play, Vec3f* pos, f32 scale, s16 spin, Color_RGB8* prim, Color_RGB8* env, u8 alpha) {
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Gfx_SetupDL25_Xlu(play->state.gfxCtx);
+    gDPPipeSync(POLY_XLU_DISP++);
+    gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, prim->r, prim->g, prim->b, alpha);
+    gDPSetEnvColor(POLY_XLU_DISP++, env->r, env->g, env->b, 128);
+    Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
+    Matrix_Scale(scale, scale, 0.0f, MTXMODE_APPLY);
+    Matrix_ReplaceRotation(&play->billboardMtxF);
+    Matrix_RotateZS(spin, MTXMODE_APPLY);
+    MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+    gSPDisplayList(POLY_XLU_DISP++, gLightOrbMaterial1DL);
+    gSPDisplayList(POLY_XLU_DISP++, gLightOrbModelDL);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// A tongue of flame (the fire of Effect_Ss_K_Fire), turned by `rotZ` around the view axis.
+void Boss02_BoDrawFlame(PlayState* play, Vec3f* pos, f32 xzScale, f32 yScale, s16 rotZ, u8 alpha) {
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
+    Matrix_Scale(xzScale, yScale, xzScale, MTXMODE_APPLY);
+    Gfx_SetupDL25_Xlu(play->state.gfxCtx);
+    gSPSegment(POLY_XLU_DISP++, 0x08,
+               Gfx_TwoTexScrollEx(play->state.gfxCtx, 0, 0, 0, 0x20, 0x40, 1, 0, play->state.frames * -20, 0x20, 0x80, 0,
+                                  0, 0, -20));
+    gDPSetPrimColor(POLY_XLU_DISP++, 0x80, 0x80, 255, 255, 0, alpha);
+    gDPSetEnvColor(POLY_XLU_DISP++, 255, 10, 0, 0);
+    gDPPipeSync(POLY_XLU_DISP++);
+    Matrix_ReplaceRotation(&play->billboardMtxF);
+    Matrix_RotateZS(rotZ, MTXMODE_APPLY);
+    MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+    gSPDisplayList(POLY_XLU_DISP++, gEffFire1DL);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// An ice crystal (the shard of Effect_Ss_En_Ice).
+void Boss02_BoDrawCrystal(PlayState* play, Vec3f* pos, f32 scale, s16 yaw, s16 pitch, u8 alpha) {
+    u32 frames = play->gameplayFrames;
+    Vec3f hilitePos = *pos;
+
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Matrix_Translate(pos->x, pos->y, pos->z, MTXMODE_NEW);
+    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+    Matrix_RotateYS(yaw, MTXMODE_APPLY);
+    Matrix_RotateXS(pitch, MTXMODE_APPLY);
+    MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+    Gfx_SetupDL25_Xlu(play->state.gfxCtx);
+    func_800BCC68(&hilitePos, play);
+    gSPSegment(POLY_XLU_DISP++, 0x08,
+               Gfx_TwoTexScrollEx(play->state.gfxCtx, 0, 0, frames & 0xFF, 0x20, 0x10, 1, 0, (frames * 2) & 0xFF, 0x40,
+                                  0x20, 0, 1, 0, 2));
+    gDPSetPrimColor(POLY_XLU_DISP++, 0, 0x80, 170, 255, 255, 255);
+    gDPSetEnvColor(POLY_XLU_DISP++, 0, 50, 100, alpha);
+    gSPDisplayList(POLY_XLU_DISP++, gEffIceFragment2MaterialDL);
+    gSPDisplayList(POLY_XLU_DISP++, gEffIceFragment2ModelDL);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// A flat ring on the ground (the shockwave of Effect_Ss_Blast), `radius` in world units.
+void Boss02_BoDrawRing(PlayState* play, Vec3f* pos, f32 radius, s32 element, u8 alpha) {
+    f32 scale = radius * 0.1f;
+
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Gfx_SetupDL25_Xlu(play->state.gfxCtx);
+    gDPSetEnvColor(POLY_XLU_DISP++, sBoTmGlowEnv[element].r, sBoTmGlowEnv[element].g, sBoTmGlowEnv[element].b, 0);
+    gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, sBoTmGlowPrim[element].r, sBoTmGlowPrim[element].g, sBoTmGlowPrim[element].b,
+                    alpha);
+    Matrix_Translate(pos->x, pos->y + (4.0f * Boss02_BoFx()), pos->z, MTXMODE_NEW);
+    Matrix_Scale(scale, 1.0f, scale, MTXMODE_APPLY);
+    MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+    gSPDisplayList(POLY_XLU_DISP++, gEffShockwaveDL);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+/**
+ * A fireball (a white-hot core in a ball of swirling flames) or a frost ball (an ice crystal in a cloud of mist).
+ * `size` is 1 for a breath ball.
+ */
+void Boss02_BoDrawBall(PlayState* play, Vec3f* pos, s32 element, f32 size, s16 spin, u8 alpha) {
+    // Kept light (a glow and a flame / a crystal): dozens of these can be in the air at once
+    Boss02_BoDrawGlow(play, pos, 22.0f * size, spin, &sBoTmGlowPrim[element], &sBoTmGlowEnv[element], (u8)(alpha * 0.7f));
+
+    if (element == BO_TM_FIRE) {
+        Boss02_BoDrawFlame(play, pos, 0.012f * size, 0.012f * size, spin, alpha);
+        Boss02_BoDrawGlow(play, pos, 9.0f * size, -spin, &sBoTmCorePrim[element], &sBoTmCoreEnv[element], alpha);
+    } else {
+        Boss02_BoDrawCrystal(play, pos, 4.0f * size, spin, spin * 2, alpha);
+    }
+}
+
+void Boss02_BoShotDraw(Actor* thisx, PlayState* play) {
+    Boss02* this = (Boss02*)thisx;
+    Boss02BoShot* shot = &this->boShot;
+    f32 fx = Boss02_BoFx();
+    Vec3f pos;
+    s32 i;
+    u8 alpha;
+
+    switch (shot->kind) {
+        case BO_TM_SHOT_FALLING:
+            if (shot->phase == 1) {
+                // A ring closing in on the spot, and the blast's reach
+                f32 closing = (f32)shot->life / 36.0f;
+                u8 ringAlpha = 150 + (s32)(105.0f * fabsf(Math_SinS(shot->timer * 0x1800)));
+
+                Boss02_BoDrawRing(play, &shot->target, shot->hitRadius * (1.0f + (1.5f * closing)), shot->element,
+                                  ringAlpha);
+                Boss02_BoDrawRing(play, &shot->target, shot->hitRadius, shot->element, 120);
+            } else if (shot->phase == 2) {
+                Boss02_BoDrawRing(play, &shot->target, shot->hitRadius, shot->element, 255);
+                if (shot->element == BO_TM_FIRE) {
+                    Boss02_BoDrawBall(play, &this->actor.world.pos, BO_TM_FIRE, 2.0f * fx, shot->spin, 255);
+                } else {
+                    // A giant icicle, point down, in a cold glow
+                    Boss02_BoDrawGlow(play, &this->actor.world.pos, 35.0f * fx, shot->spin,
+                                      &sBoTmGlowPrim[BO_TM_ICE], &sBoTmGlowEnv[BO_TM_ICE], 150);
+                    Boss02_BoDrawCrystal(play, &this->actor.world.pos, 12.0f * fx, shot->spin, 0x4000, 255);
+                }
+            }
+            break;
+
+        case BO_TM_SHOT_PATCH:
+            alpha = (shot->life < 20) ? (shot->life * 12) : 240;
+            pos = this->actor.world.pos;
+            pos.y += 15.0f * fx;
+            Boss02_BoDrawGlow(play, &pos, 40.0f * fx * shot->size, shot->spin, &sBoTmGlowPrim[shot->element],
+                              &sBoTmGlowEnv[shot->element], alpha / 3);
+
+            // One in the middle, two around it
+            for (i = 0; i < 3; i++) {
+                s16 angle = shot->spin + (i * 0x8000);
+                f32 dist = (i == 0) ? 0.0f : (shot->hitRadius * 0.6f * shot->size);
+
+                pos.x = this->actor.world.pos.x + (Math_SinS(angle) * dist);
+                pos.y = this->actor.world.pos.y;
+                pos.z = this->actor.world.pos.z + (Math_CosS(angle) * dist);
+
+                if (shot->element == BO_TM_FIRE) {
+                    f32 flicker = 0.85f + (0.3f * Math_SinS((shot->timer * 0x1300) + (i * 0x2E00)));
+
+                    pos.y += 5.0f * fx;
+                    Boss02_BoDrawFlame(play, &pos, 0.009f * fx * shot->size, 0.011f * fx * shot->size * flicker,
+                                       (i & 1) ? 0x8000 : 0, alpha);
+                } else {
+                    pos.y += 25.0f * fx * shot->size;
+                    Boss02_BoDrawCrystal(play, &pos, ((i == 0) ? 7.0f : 4.5f) * fx * shot->size, i * 0x5555,
+                                         0x4000 + ((i - 1) * 0x900), alpha);
+                }
+            }
+            break;
+
+        default:
+            alpha = (shot->life < 6) ? (shot->life * 40) : 255;
+            Boss02_BoDrawBall(play, &this->actor.world.pos, shot->element,
+                              shot->size * fx * ((shot->kind == BO_TM_SHOT_SPARK) ? 0.8f : 1.0f), shot->spin, alpha);
+            break;
+    }
+}
+
+/* The dragons themselves */
+
+// Twinmold's jaws while it gathers and pours out its breath.
+void Boss02_BoDrawMouth(Boss02* this, PlayState* play) {
+    f32 fx = Boss02_BoFx();
+    f32 glow = this->boGlow;
+    s32 element = this->boBreathElement;
+    Vec3f pos = this->unk_017C;
+
+    this->boMouthPos = this->unk_017C;
+
+    if (glow < 0.02f) {
+        return;
+    }
+
+    glow *= 0.9f + (0.1f * Math_SinS(this->unk_014C * 0x2800));
+    Boss02_BoDrawGlow(play, &pos, 40.0f * fx * glow, this->unk_014C * 0x300, &sBoTmGlowPrim[element],
+                      &sBoTmGlowEnv[element], (u8)(200.0f * this->boGlow));
+
+    if (element == BO_TM_FIRE) {
+        Boss02_BoDrawFlame(play, &pos, 0.012f * fx * glow, 0.015f * fx * glow, this->unk_014C * 0x700,
+                           (u8)(255.0f * this->boGlow));
+    } else {
+        Boss02_BoDrawCrystal(play, &pos, 5.0f * fx * glow, this->unk_014C * 0x500, this->unk_014C * 0x300,
+                             (u8)(255.0f * this->boGlow));
+    }
+
+    Boss02_BoDrawGlow(play, &pos, 16.0f * fx * glow, -this->unk_014C * 0x500, &sBoTmCorePrim[element],
+                      &sBoTmCoreEnv[element], (u8)(255.0f * this->boGlow));
+}
+
+// In the Giant's Mask arena, touching Twinmold hurts twice as much as in the original game.
+void Boss02_BoSetContactDamage(Boss02* this) {
+    u8 damage = (BO_ATTACKS_ENABLED() && sIsInGiantMode) ? 0x20 : 0x10;
+    s32 i;
+
+    for (i = 0; i < ARRAY_COUNT(this->colliderSphere1Elements); i++) {
+        this->colliderSphere1Elements[i].base.atDmgInfo.damage = damage;
+    }
+    for (i = 0; i < ARRAY_COUNT(this->colliderSphere2Elements); i++) {
+        this->colliderSphere2Elements[i].base.atDmgInfo.damage = damage;
+    }
+}
+
+// The jaws light up the arena in the breath's color.
+void Boss02_BoUpdateLight(Boss02* this) {
+    s32 element = this->boBreathElement;
+    f32 glow = this->boGlow;
+
+    Lights_PointNoGlowSetInfo(&this->boLightInfo, this->boMouthPos.x, this->boMouthPos.y, this->boMouthPos.z,
+                              (u8)(sBoTmLight[element].r * glow), (u8)(sBoTmLight[element].g * glow),
+                              (u8)(sBoTmLight[element].b * glow),
+                              (s16)(glow * (sIsInGiantMode ? 500.0f : 2200.0f)));
+}
+
+// Flames lick off the fire dragon's body; the ice dragon sheds freezing mist.
+void Boss02_BoAura(Boss02* this, PlayState* play) {
+    static Vec3f sFlameAccel = { 0.0f, 0.3f, 0.0f };
+    f32 fx = Boss02_BoFx();
+    f32 floorY = sIsInGiantMode ? 3150.0f : 0.0f;
+    s32 element = Boss02_BoOwnElement(this);
+    Vec3f pos;
+    Vec3f velocity;
+
+    if ((this->unk_014C % 16) != 0) {
+        return;
+    }
+
+    // The survivor carries both elements
+    if ((this->unk_0195 != 0) && ((this->unk_014C / 16) % 2)) {
+        element ^= 1;
+    }
+
+    pos = this->unk_147C[(s32)Rand_ZeroFloat(19.99f) + 1];
+    if (pos.y < (floorY + (40.0f * sGiantModeScaleFactor))) {
+        return;
+    }
+
+    velocity.x = 0.0f;
+    velocity.z = 0.0f;
+    if (element == BO_TM_FIRE) {
+        velocity.y = 1.5f * fx;
+        EffectSsKFire_Spawn(play, &pos, &velocity, &sFlameAccel, (s16)(70.0f * fx), 100);
+    } else {
+        velocity.y = -1.0f * fx;
+        EffectSsIceSmoke_Spawn(play, &pos, &velocity, &gZeroVec3f, (s16)(600.0f * fx));
+    }
+}
+
+// After a breath: rest, and the survivor switches elements.
+void Boss02_BoEndBreath(Boss02* this) {
+    s32 enraged = (this->unk_0195 != 0);
+
+    this->boBreathCooldown = (s16)(enraged ? (Rand_ZeroFloat(60.0f) + 150.0f) : (Rand_ZeroFloat(80.0f) + 200.0f));
+    if (sIsInGiantMode) {
+        this->boBreathCooldown = (this->boBreathCooldown * 3) / 4;
+    }
+    if (enraged) {
+        this->boBreathElement ^= 1;
+    }
+}
+
+/**
+ * Dragon breath: gather (the jaws glow brighter and brighter, the dragon slows down), then pour out a stream that sweeps
+ * after Link with a lag. The survivor's breath has three jets, alternating which element is in the middle.
+ */
+void Boss02_BoBreath(Boss02* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    f32 fx = Boss02_BoFx();
+    f32 world = sGiantModeScaleFactor;
+    s32 enraged = (this->unk_0195 != 0);
+    s32 element = this->boBreathElement;
+    Vec3f forward;
+    Vec3f mouth = this->boMouthPos;
+    Vec3f toPlayer;
+    Vec3f velocity;
+    f32 dist;
+    f32 groundY;
+
+    forward.x = Math_SinS(this->actor.world.rot.y) * Math_CosS(this->actor.world.rot.x);
+    forward.y = Math_SinS(this->actor.world.rot.x);
+    forward.z = Math_CosS(this->actor.world.rot.y) * Math_CosS(this->actor.world.rot.x);
+
+    // Before the first draw (or right after the arena changed size) the jaws aren't known yet
+    if (Math_Vec3f_DistXYZ(&mouth, &this->actor.world.pos) > (800.0f * world)) {
+        mouth.x = this->actor.world.pos.x + (forward.x * 300.0f * world);
+        mouth.y = this->actor.world.pos.y + (forward.y * 300.0f * world);
+        mouth.z = this->actor.world.pos.z + (forward.z * 300.0f * world);
+    }
+
+    groundY = Boss02_BoFloorY(play, &this->actor.world.pos);
+    if (groundY == BGCHECK_Y_MIN) {
+        groundY = sIsInGiantMode ? 3150.0f : 0.0f;
+    }
+
+    if (this->boWindupTimer > 0) {
+        // Gathering: fire / frost is drawn into the jaws
+        this->boWindupTimer--;
+        Math_ApproachF(&this->boGlow, 1.0f, 1.0f, 0.045f);
+        Math_ApproachF(&this->boSpeedScale, 0.45f, 1.0f, 0.04f);
+
+        if ((this->boWindupTimer % 6) == 0) {
+            Vec3f from;
+            s16 yaw = (s16)Rand_Next();
+            s16 pitch = (s16)Rand_CenteredFloat(0x6000);
+            f32 reach = 260.0f * fx;
+
+            from.x = mouth.x + (Math_SinS(yaw) * Math_CosS(pitch) * reach);
+            from.y = mouth.y + (Math_SinS(pitch) * reach);
+            from.z = mouth.z + (Math_CosS(yaw) * Math_CosS(pitch) * reach);
+            // They reach the jaws as they fade out (flames last about 38 frames, mist 50), following the head
+            velocity.x = ((mouth.x - from.x) / ((element == BO_TM_FIRE) ? 38.0f : 50.0f)) + this->actor.velocity.x;
+            velocity.y = ((mouth.y - from.y) / ((element == BO_TM_FIRE) ? 38.0f : 50.0f)) + this->actor.velocity.y;
+            velocity.z = ((mouth.z - from.z) / ((element == BO_TM_FIRE) ? 38.0f : 50.0f)) + this->actor.velocity.z;
+
+            if (element == BO_TM_FIRE) {
+                EffectSsKFire_Spawn(play, &from, &velocity, &gZeroVec3f, (s16)(50.0f * fx), 100);
+            } else {
+                EffectSsIceSmoke_Spawn(play, &from, &velocity, &gZeroVec3f, (s16)(500.0f * fx));
+            }
+        }
+
+        if (this->boWindupTimer == 0) {
+            this->boBreathTimer = enraged ? 84 : 60;
+            toPlayer.x = player->actor.world.pos.x - mouth.x;
+            toPlayer.y = player->actor.world.pos.y - mouth.y;
+            toPlayer.z = player->actor.world.pos.z - mouth.z;
+            dist = sqrtf(SQ(toPlayer.x) + SQ(toPlayer.y) + SQ(toPlayer.z));
+            // The stream starts straight ahead and swings onto Link from there
+            this->boBreathTarget.x = mouth.x + (forward.x * dist);
+            this->boBreathTarget.y = mouth.y + (forward.y * dist);
+            this->boBreathTarget.z = mouth.z + (forward.z * dist);
+            Actor_PlaySfx(&this->actor, NA_SE_EN_INBOSS_ROAR_OLD);
+        }
+        return;
+    }
+
+    if (this->boBreathTimer > 0) {
+        Vec3f target;
+
+        this->boBreathTimer--;
+        Math_ApproachF(&this->boGlow, 1.0f, 1.0f, 0.1f);
+        Math_ApproachF(&this->boSpeedScale, 0.45f, 1.0f, 0.04f);
+
+        // The aim point chases Link at a limited speed
+        target.x = player->actor.world.pos.x;
+        target.y = player->actor.world.pos.y + (25.0f * fx);
+        target.z = player->actor.world.pos.z;
+        Math_ApproachF(&this->boBreathTarget.x, target.x, 1.0f, 38.0f * fx);
+        Math_ApproachF(&this->boBreathTarget.y, target.y, 1.0f, 38.0f * fx);
+        Math_ApproachF(&this->boBreathTarget.z, target.z, 1.0f, 38.0f * fx);
+
+        // It can't breathe backwards, or through the sand it dives into
+        toPlayer.x = this->boBreathTarget.x - mouth.x;
+        toPlayer.y = this->boBreathTarget.y - mouth.y;
+        toPlayer.z = this->boBreathTarget.z - mouth.z;
+        if ((((forward.x * toPlayer.x) + (forward.y * toPlayer.y) + (forward.z * toPlayer.z)) < 0.0f) ||
+            (mouth.y < (groundY + (120.0f * world)))) {
+            this->boBreathTimer = 0;
+            Boss02_BoEndBreath(this);
+            return;
+        }
+
+        Actor_PlaySfx(&this->actor, ((element == BO_TM_FIRE) ? NA_SE_EN_DODO_J_FIRE : NA_SE_EN_FREEZAD_BREATH) - SFX_FLAG);
+
+        if ((this->boBreathTimer % 3) == 0) {
+            BoOrb_AimVelocity(&mouth, &this->boBreathTarget, 75.0f * fx, 0, &velocity);
+            Boss02_BoSpawnShot(play, BO_TM_SHOT_BREATH, element, &mouth, &velocity);
+
+            if (enraged) {
+                // The fallen twin's element on either side
+                BoOrb_AimVelocity(&mouth, &this->boBreathTarget, 75.0f * fx, 0x900, &velocity);
+                Boss02_BoSpawnShot(play, BO_TM_SHOT_BREATH, element ^ 1, &mouth, &velocity);
+                BoOrb_AimVelocity(&mouth, &this->boBreathTarget, 75.0f * fx, -0x900, &velocity);
+                Boss02_BoSpawnShot(play, BO_TM_SHOT_BREATH, element ^ 1, &mouth, &velocity);
+            }
+        } else if (((this->boBreathTimer % 6) == 1) && (!enraged || ((this->boBreathTimer % 12) == 1))) {
+            // The breath itself, pouring out of the jaws (half as often for the three jets of the survivor)
+            BoOrb_AimVelocity(&mouth, &this->boBreathTarget, 30.0f * fx, (s16)Rand_CenteredFloat(0x600), &velocity);
+            if (element == BO_TM_FIRE) {
+                EffectSsKFire_Spawn(play, &mouth, &velocity, &gZeroVec3f, (s16)(90.0f * fx), 100);
+            } else {
+                EffectSsIceSmoke_Spawn(play, &mouth, &velocity, &gZeroVec3f, (s16)(800.0f * fx));
+            }
+        }
+
+        if (this->boBreathTimer == 0) {
+            Boss02_BoEndBreath(this);
+        }
+        return;
+    }
+
+    Math_ApproachZeroF(&this->boGlow, 1.0f, 0.06f);
+    Math_ApproachF(&this->boSpeedScale, 1.0f, 1.0f, 0.04f);
+
+    if (this->boBreathCooldown > 0) {
+        this->boBreathCooldown--;
+        return;
+    }
+
+    // Only out of the sand: rising (1), flying across the arena (2) or chasing Link (5)
+    if ((this->unk_0144 != 1) && (this->unk_0144 != 2) && (this->unk_0144 != 5)) {
+        return;
+    }
+
+    if (this->actor.world.pos.y < (groundY + (200.0f * world))) {
+        return;
+    }
+
+    toPlayer.x = player->actor.world.pos.x - mouth.x;
+    toPlayer.y = player->actor.world.pos.y - mouth.y;
+    toPlayer.z = player->actor.world.pos.z - mouth.z;
+    dist = sqrtf(SQ(toPlayer.x) + SQ(toPlayer.y) + SQ(toPlayer.z));
+
+    if ((dist < (300.0f * world)) || (dist > (3500.0f * world))) {
+        return;
+    }
+
+    // Link has to be roughly in front of the head
+    if (((forward.x * toPlayer.x) + (forward.y * toPlayer.y) + (forward.z * toPlayer.z)) < (0.35f * dist)) {
+        return;
+    }
+
+    this->boWindupTimer = 28;
+    Actor_PlaySfx(&this->actor, NA_SE_EN_INBOSS_ROAR_OLD);
+    Actor_PlaySfx(&this->actor, (element == BO_TM_FIRE) ? NA_SE_EN_DODO_J_BREATH : NA_SE_EV_ICE_PILLAR_RISING);
+}
+
+/**
+ * Meteor storm (fire) / hailstorm (ice): while cruising high above the arena, the dragon spits balls into the sky and
+ * they come back down on marked spots around Link, one after another, the first one where he stood.
+ */
+void Boss02_BoStorm(Boss02* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    f32 fx = Boss02_BoFx();
+    f32 world = sGiantModeScaleFactor;
+    s32 enraged = (this->unk_0195 != 0);
+    s32 own = Boss02_BoOwnElement(this);
+    Vec3f mouth = this->boMouthPos;
+    Vec3f velocity;
+    Vec3f spot;
+    s32 count;
+    s32 i;
+    f32 floorY;
+
+    if ((this->boWindupTimer > 0) || (this->boBreathTimer > 0)) {
+        return;
+    }
+
+    if (this->boRainCooldown > 0) {
+        this->boRainCooldown--;
+        return;
+    }
+
+    if ((this->unk_0144 != 2) || (Math_Vec3f_DistXYZ(&mouth, &this->actor.world.pos) > (800.0f * world))) {
+        return;
+    }
+
+    floorY = Boss02_BoFloorY(play, &this->actor.world.pos);
+    if ((floorY == BGCHECK_Y_MIN) || (this->actor.world.pos.y < (floorY + (400.0f * world)))) {
+        return;
+    }
+
+    // Balls spat into the sky
+    for (i = 0; i < 2; i++) {
+        velocity.x = Rand_CenteredFloat(16.0f * fx);
+        velocity.y = 45.0f * fx;
+        velocity.z = Rand_CenteredFloat(16.0f * fx);
+        Boss02_BoSpawnShot(play, BO_TM_SHOT_SPARK, (enraged && (i == 1)) ? (own ^ 1) : own, &mouth, &velocity);
+    }
+
+    count = enraged ? 7 : 5;
+    for (i = 0; i < count; i++) {
+        Boss02* falling;
+        s32 element = own;
+
+        spot = player->actor.world.pos;
+        if (i != 0) {
+            s16 yaw = (s16)Rand_Next();
+            f32 dist = (Rand_ZeroFloat(380.0f) + 120.0f) * fx;
+
+            spot.x += Math_SinS(yaw) * dist;
+            spot.z += Math_CosS(yaw) * dist;
+        }
+
+        floorY = Boss02_BoFloorY(play, &spot);
+        if (floorY == BGCHECK_Y_MIN) {
+            continue; // outside the arena
+        }
+        spot.y = floorY;
+
+        if (enraged && (((i + this->boRainFlip) % 2) != 0)) {
+            element = own ^ 1;
+        }
+
+        falling = Boss02_BoSpawnShot(play, BO_TM_SHOT_FALLING, element, &spot, &gZeroVec3f);
+        if (falling != NULL) {
+            // Wait for the balls to go up, then one after another
+            falling->boShot.life = 14 + (i * 7);
+        }
+    }
+
+    this->boRainFlip ^= 1;
+    Actor_PlaySfx(&this->actor, NA_SE_EN_INBOSS_ROAR_OLD);
+    Actor_PlaySfx(&this->actor, (own == BO_TM_FIRE) ? NA_SE_EV_FLAME_IGNITION : NA_SE_EV_ICE_SWING);
+
+    this->boRainCooldown = (s16)(enraged ? (Rand_ZeroFloat(70.0f) + 330.0f) : (Rand_ZeroFloat(90.0f) + 430.0f));
+    if (sIsInGiantMode) {
+        this->boRainCooldown = (this->boRainCooldown * 3) / 4;
+    }
+}
+
+/**
+ * Called every frame for both heads, after their action.
+ */
+void Boss02_BoDragonUpdate(Boss02* this, PlayState* play) {
+    if (this->boEruptCooldown > 0) {
+        this->boEruptCooldown--;
+    }
+
+    Boss02_BoSetContactDamage(this);
+
+    // The arena changed size: whatever was in progress is dropped (its positions are no longer valid)
+    if (this->boLastGiantMode != sIsInGiantMode) {
+        this->boLastGiantMode = sIsInGiantMode;
+        this->boWindupTimer = 0;
+        this->boBreathTimer = 0;
+        this->boMouthPos = this->actor.world.pos;
+    }
+
+    if (BO_ATTACKS_ENABLED() &&
+        ((this->unk_0144 < 10) || (this->unk_0144 == 11) || (this->unk_0144 == 12))) {
+        Boss02_BoAura(this, play);
+    }
+
+    if (!Boss02_BoCanAttack(this, play)) {
+        this->boWindupTimer = 0;
+        this->boBreathTimer = 0;
+        Math_ApproachZeroF(&this->boGlow, 1.0f, 0.08f);
+        Math_ApproachF(&this->boSpeedScale, 1.0f, 1.0f, 0.05f);
+    } else {
+        Boss02_BoBreath(this, play);
+        Boss02_BoStorm(this, play);
+    }
+
+    Boss02_BoUpdateLight(this);
+}
+
+/**
+ * Whenever Twinmold bursts through the sand, a ring of fire / ice is thrown out of the breach and rains down around it,
+ * half of it leaving burning ground / ice spikes where it lands.
+ */
+void Boss02_BoEruption(Boss02* this, PlayState* play, Vec3f* breachPos) {
+    static Vec3f sFlameAccel = { 0.0f, 0.3f, 0.0f };
+    f32 fx = Boss02_BoFx();
+    s32 own = Boss02_BoOwnElement(this);
+    s32 enraged = (this->unk_0195 != 0);
+    Vec3f from;
+    Vec3f to;
+    Vec3f velocity;
+    s32 i;
+    s32 count;
+    s16 baseYaw;
+
+    if (!Boss02_BoCanAttack(this, play) || (this->boEruptCooldown > 0)) {
+        return;
+    }
+
+    count = enraged ? 8 : 6;
+    baseYaw = (s16)Rand_Next();
+    from = *breachPos;
+    from.y += 40.0f * fx;
+
+    // A pillar of fire / ice out of the breach
+    for (i = 0; i < 2; i++) {
+        Vec3f pillarPos = from;
+
+        pillarPos.x += Rand_CenteredFloat(120.0f * fx);
+        pillarPos.z += Rand_CenteredFloat(120.0f * fx);
+        velocity.x = 0.0f;
+        velocity.y = (6.0f + (i * 3.0f)) * fx;
+        velocity.z = 0.0f;
+        if (own == BO_TM_FIRE) {
+            EffectSsKFire_Spawn(play, &pillarPos, &velocity, &sFlameAccel, (s16)(170.0f * fx), 100);
+        } else {
+            EffectSsIceSmoke_Spawn(play, &pillarPos, &velocity, &gZeroVec3f, (s16)(1400.0f * fx));
+            if (i == 0) {
+                EffectSsEnIce_Spawn(play, &pillarPos, 2.5f * fx, &velocity, &gZeroVec3f, &sBoTmIcePrim, &sBoTmIceEnv,
+                                    30);
+            }
+        }
+    }
+    SoundSource_PlaySfxAtFixedWorldPos(play, &from, 30,
+                                       (own == BO_TM_FIRE) ? NA_SE_EV_FIRE_PILLAR : NA_SE_EV_ICE_PILLAR_RISING);
+
+    for (i = 0; i < count; i++) {
+        Boss02* lob;
+        f32 radius = (Rand_ZeroFloat(300.0f) + 380.0f) * fx;
+        s16 yaw = baseYaw + (i * (0x10000 / count));
+        f32 floorY;
+        s32 element = (enraged && (i % 2)) ? (own ^ 1) : own;
+
+        to.x = breachPos->x + (Math_SinS(yaw) * radius);
+        to.y = breachPos->y;
+        to.z = breachPos->z + (Math_CosS(yaw) * radius);
+        floorY = Boss02_BoFloorY(play, &to);
+        if (floorY != BGCHECK_Y_MIN) {
+            to.y = floorY;
+        }
+
+        BoOrb_ArcVelocity(&from, &to, 34.0f, -1.3f * fx, &velocity);
+        lob = Boss02_BoSpawnShot(play, BO_TM_SHOT_LOB, element, &from, &velocity);
+        if (lob != NULL) {
+            lob->boShot.gravity = -1.3f * fx;
+            lob->boShot.leavesPatch = ((i % 2) == 0);
+        }
+    }
+
+    this->boEruptCooldown = 150;
 }
 
 void func_809DAA74(Boss02* this, PlayState* play) {
@@ -753,11 +1934,12 @@ void func_809DAB78(Boss02* this, PlayState* play) {
         }
 
         this->unk_0168 = 2000.0f;
+        // Boss Overhaul: Boss02_BoSpeedScale slows the dragon down while it breathes
         if (this->unk_0195 != 0) {
-            this->actor.speed = this->unk_01A8 * sGiantModeScaleFactor * 1.25f;
+            this->actor.speed = this->unk_01A8 * sGiantModeScaleFactor * 1.25f * Boss02_BoSpeedScale(this);
             this->skelAnime.playSpeed = 2.0f;
         } else {
-            this->actor.speed = this->unk_01A8 * sGiantModeScaleFactor;
+            this->actor.speed = this->unk_01A8 * sGiantModeScaleFactor * Boss02_BoSpeedScale(this);
         }
 
         Actor_UpdateVelocityWithoutGravity(&this->actor);
@@ -777,6 +1959,7 @@ void func_809DAB78(Boss02* this, PlayState* play) {
             this->unk_0170.y = temp_f0;
             this->unk_016C = 120;
             Actor_PlaySfx(&this->actor, NA_SE_EN_INBOSS_ROAR_OLD);
+            Boss02_BoEruption(this, play, &this->unk_0170);
         }
 
         this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
@@ -842,7 +2025,8 @@ void func_809DAB78(Boss02* this, PlayState* play) {
 
         case 1:
             if (this->unk_0146[0] == 0) {
-                if (Rand_ZeroOne() < 0.3f) {
+                // Boss Overhaul: hunts Link more often against giant Link and once its twin is dead
+                if (Rand_ZeroOne() < Boss02_BoChaseChance(this)) {
                     this->unk_0144 = 5;
                     this->unk_0146[0] = 150;
                 } else {
@@ -1242,6 +2426,11 @@ void Boss02_Twinmold_Update(Actor* thisx, PlayState* play) {
 
         this->actionFunc(this, play);
 
+        if ((TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ||
+            (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_BLUE)) {
+            Boss02_BoDragonUpdate(this, play);
+        }
+
         if (this->unk_016C != 0) {
             if ((this->unk_016C == 60) && (this->unk_0144 < 20)) {
                 Actor_PlaySfx(&this->actor, NA_SE_EN_INBOSS_ROAR_OLD);
@@ -1318,6 +2507,14 @@ void Boss02_Twinmold_Update(Actor* thisx, PlayState* play) {
                 this->unk_0156 |= 4;
                 break;
         }
+    } else if ((TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_RED) ||
+               (TWINMOLD_GET_TYPE(&this->actor) == TWINMOLD_TYPE_BLUE)) {
+        // Boss Overhaul: during the Giant's Mask transformation the jaws go dark and any breath is dropped
+        this->boWindupTimer = 0;
+        this->boBreathTimer = 0;
+        this->boGlow = 0.0f;
+        this->boSpeedScale = 1.0f;
+        Boss02_BoUpdateLight(this);
     }
 }
 
@@ -1504,6 +2701,9 @@ void Boss02_Twinmold_Draw(Actor* thisx, PlayState* play2) {
         func_809DA50C(0, &this->colliderSphere2, &this->unk_147C[0]);
         func_809DA50C(21, &this->colliderSphere1, &D_809DFAF4);
     }
+
+    // Boss Overhaul: the glowing jaws
+    Boss02_BoDrawMouth(this, play);
 }
 
 void Boss02_BattleHandler_Draw(Actor* thisx, PlayState* play) {
@@ -2356,6 +3556,8 @@ void Boss02_Reset(void) {
     sTwinmoldMusicStartTimer = 0;
     sBlueWarp = NULL;
     sGiantModeScaleFactor = 1.0f;
+    sBoTmShotCount = 0;
+    sBoTmPatchCount = 0;
 
     for (int i = 0; i < TWINMOLD_EFFECT_COUNT; i++) {
         sTwinmoldEffects[i].type = TWINMOLD_EFFECT_NONE;

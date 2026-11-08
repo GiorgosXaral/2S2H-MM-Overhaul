@@ -2,6 +2,7 @@
 #define Z_BOSS_03_H
 
 #include "global.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 #include "objects/object_boss03/object_boss03.h"
 
 struct Boss03;
@@ -102,7 +103,10 @@ typedef struct Boss03 {
     /* 0x570 */ f32 unk_570; // set but not used
     /* 0x574 */ UNK_TYPE1 unk_574[0x04];
     /* 0x578 */ f32 subCamFov;
-} Boss03; // size = 0x57C
+    // Boss Overhaul
+    s16 boSpitTimer;
+    BoOrb boOrb;
+} Boss03; // size = 0x57C (vanilla)
  
 #define GYORG_PARAM_DEFAULT (0)
 #define GYORG_PARAM_SEAWEED (0x23)

@@ -198,6 +198,12 @@ static const std::vector<const char*> mirroredWorldModes = {
     "Dungeons Random (Seeded)", // MIRRORED_WORLD_DUNGEONS_RANDOM_SEEDED
 };
 
+static const std::unordered_map<int32_t, const char*> eponaControlModeOptions = {
+    { 0, "Tank (vanilla)" },
+    { 1, "Freeform" },
+    { 2, "Hybrid" },
+};
+
 static const std::unordered_map<int32_t, const char*> damageMultiplierOptions = {
     { 0, "1x" }, { 1, "2x" }, { 2, "4x" }, { 3, "8x" }, { 4, "16x" }, { 10, "1 Hit KO" },
 };
@@ -1469,6 +1475,18 @@ void BenMenu::AddEnhancements() {
 
     path = { "Enhancements", "Items/Songs", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Items/Songs", 3);
+    AddWidget(path, "Swords", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Sword Projectiles", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.SwordProjectiles.Enabled")
+        .Options(CheckboxOptions()
+                     .Tooltip("Normal sword slashes fire a projectile (jump and spin attacks are unchanged, one "
+                              "projectile at a time):\n\n"
+                              "Gilded Sword (full hearts): a golden crescent that hits once for Gilded Sword damage.\n\n"
+                              "Great Fairy's Sword (full hearts): a spinning ring that cuts through every enemy in its "
+                              "path for Great Fairy's Sword damage.\n\n"
+                              "Fierce Deity (any health, 1 magic): replaces the sword beam with a deity orb, the "
+                              "fastest and strongest, that bursts on impact and hurts everything around it.")
+                     .DefaultValue(true));
     // Mask Enhancements
     AddWidget(path, "Masks", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "Equippable While Swimming", WIDGET_CVAR_CHECKBOX)
@@ -1818,6 +1836,74 @@ void BenMenu::AddEnhancements() {
                      .Max(40)
                      .DefaultValue(0));
 
+    // Epona Control Overhaul (port of LT_Schmiddy's mod for Majora's Mask: Recompiled)
+    path = { "Enhancements", "Epona", SECTION_COLUMN_1 };
+    AddSidebarEntry("Enhancements", "Epona", 2);
+    AddWidget(path, "Epona Control Overhaul", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Enable Epona Control Overhaul", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EponaOverhaul.Enabled")
+        .Options(CheckboxOptions()
+                     .Tooltip("New steering options and handling for Epona. Off restores vanilla riding.\n\n"
+                              "Port of LT_Schmiddy's Epona Control Overhaul mod.")
+                     .DefaultValue(true));
+    AddWidget(path, "Control Mode", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.EponaOverhaul.ControlMode")
+        .Options(ComboboxOptions()
+                     .Tooltip("Tank (vanilla): left / right turns Epona, pulling back brakes and backs up.\n\n"
+                              "Freeform: Epona runs wherever you point the stick, relative to the camera, like Link "
+                              "does on foot. Let go of the stick to brake.\n\n"
+                              "Hybrid: Freeform, but Tank while aiming in first person.")
+                     .ComboMap(&eponaControlModeOptions)
+                     .DefaultIndex(1));
+    AddWidget(path, "Bunny Hood Boost", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.EponaOverhaul.BunnyHood")
+        .Options(CheckboxOptions()
+                     .Tooltip("While Link wears the Bunny Hood, Epona runs twice as fast and turns twice as quickly.")
+                     .DefaultValue(true));
+    path.column = SECTION_COLUMN_2;
+    AddWidget(path, "Handling", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Tank Turn Strength: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.EponaOverhaul.TankTurnMult")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly Epona turns with Tank controls (vanilla is 1.0x).")
+                     .Min(1.0f)
+                     .Max(10.0f)
+                     .Step(0.1f)
+                     .DefaultValue(2.0f));
+    AddWidget(path, "Tank Brake Strength: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.EponaOverhaul.TankBrakeMult")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly Epona stops with Tank controls (vanilla is 1.0x).")
+                     .Min(1.0f)
+                     .Max(10.0f)
+                     .Step(0.1f)
+                     .DefaultValue(2.0f));
+    AddWidget(path, "Freeform Turn Strength: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.EponaOverhaul.FreeformTurnMult")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly Epona turns towards the stick with Freeform controls.")
+                     .Min(1.0f)
+                     .Max(10.0f)
+                     .Step(0.1f)
+                     .DefaultValue(3.0f));
+    AddWidget(path, "Freeform Brake Strength: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.EponaOverhaul.FreeformBrakeMult")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly Epona stops when you let go of the stick with Freeform controls.")
+                     .Min(1.0f)
+                     .Max(10.0f)
+                     .Step(0.1f)
+                     .DefaultValue(4.0f));
+    AddWidget(path, "Freeform Minimum Turn: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.EponaOverhaul.FreeformMinTurn")
+        .Options(IntSliderOptions()
+                     .Tooltip("The slowest Epona ever turns with Freeform controls, so she never drifts wide. "
+                              "Higher is snappier.")
+                     .Min(10)
+                     .Max(1500)
+                     .Step(10)
+                     .DefaultValue(1000));
+
     // Difficulty Options
     path = { "Enhancements", "Difficulty Options", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Difficulty Options", 3);
@@ -1828,8 +1914,30 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Boss Health Multiplier", WIDGET_CVAR_COMBOBOX)
         .CVar("gEnhancements.DifficultyOptions.BossHealthMultiplier")
         .Options(ComboboxOptions()
-                     .Tooltip("Multiply the health of all bosses. Requires a Scene Reload to take effect.")
+                     .Tooltip("Multiply the health of all bosses. Requires a Scene Reload to take effect.\n\n"
+                              "Has no effect while \"Boss Overhaul: Boss HP\" is on.")
                      .ComboMap(&bossHealthOptions));
+    AddWidget(path, "Boss Overhaul", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Boss Overhaul: Boss HP", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.BossOverhaul.BossHP")
+        .Options(CheckboxOptions()
+                     .Tooltip("Odolwa, Goht, Gyorg and Twinmold have twice their health. Every phase of Majora has "
+                              "three times its health.\n\nTakes effect the next time a boss fight starts.")
+                     .DefaultValue(true));
+    AddWidget(path, "Boss Overhaul: Extra Attacks", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.BossOverhaul.ExtraAttacks")
+        .Options(CheckboxOptions()
+                     .Tooltip("Every boss gains new attacks made from the game's own effects: Odolwa's fire waves, "
+                              "Goht's electric mines, Gyorg's water bullets, Twinmold's fire and ice dragons, and new "
+                              "projectile patterns and summoned Remains for Majora. Bosses never pause less between "
+                              "attacks.")
+                     .DefaultValue(true));
+    AddWidget(path, "Boss Overhaul: Majora Resists Fierce Deity", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.BossOverhaul.MajoraVsFierceDeity")
+        .Options(CheckboxOptions()
+                     .Tooltip("While you wear the Fierce Deity's Mask, Majora takes half damage, Majora's Mask uses its "
+                              "fire beam, and every new projectile pattern is bigger.")
+                     .DefaultValue(true));
     AddWidget(path, "Damage Multiplier", WIDGET_CVAR_COMBOBOX)
         .CVar("gEnhancements.DifficultyOptions.DamageMultiplier")
         .Options(ComboboxOptions()

@@ -30,6 +30,7 @@
 #include "2s2h/BenPort.h"
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -1349,6 +1350,285 @@ static u8 sWrathTexMask32by32[32 * 32]; // gMajorasWrathMouthTex, gMajoraBloodsh
 static u8 sWrathTexMask32by64[32 * 64];
 // #endregion
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * Boss Overhaul
+ *
+ * Every phase has three times its health and new projectile patterns. Majora already has two self-contained projectile
+ * types (MAJORA_TYPE_PROJECTILE_REMAINS / _INCARNATION); they are spawned here already flying in a chosen direction
+ * instead of aiming themselves at Link. Wrath also calls the four Remains back into the fight as it weakens.
+ *
+ * While Fierce Deity is worn (and the option is on): Majora takes half damage, Majora's Mask no longer refuses to use
+ * its fire beam, and every new pattern fires more projectiles. Nothing ever fires more often; patterns only get bigger.
+ * --------------------------------------------------------------------------------------------------------------- */
+
+s32 Boss07_BoFierce(PlayState* play) {
+    return BO_FIERCE_DEITY_ENABLED() && BoMM_IsFierceDeity(play);
+}
+
+Boss07* Boss07_BoFire(PlayState* play, s16 type, Vec3f* pos, s16 yaw, s16 pitch, f32 speed) {
+    Boss07* proj = (Boss07*)Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, pos->x, pos->y, pos->z, 0, 0, 0,
+                                        MAJORA_PARAMS(type));
+
+    if (proj != NULL) {
+        // Skip the projectile's own "aim at Link" first frame
+        proj->subAction = PROJECTILE_SUB_ACTION_FLY;
+        proj->actor.world.rot.y = yaw;
+        proj->actor.world.rot.x = pitch;
+        proj->actor.speed = speed;
+    }
+
+    return proj;
+}
+
+void Boss07_BoAimAtPlayer(PlayState* play, Vec3f* from, s16* yaw, s16* pitch) {
+    Player* player = GET_PLAYER(play);
+    f32 dx = player->actor.world.pos.x - from->x;
+    f32 dy = (player->actor.world.pos.y + 20.0f) - from->y;
+    f32 dz = player->actor.world.pos.z - from->z;
+
+    *yaw = Math_Atan2S(dx, dz);
+    *pitch = Math_Atan2S(dy, sqrtf(SQ(dx) + SQ(dz)));
+}
+
+/**
+ * Majora's Mask, while floating between attacks: every 150 frames it shakes for a moment and then fires one of three
+ * volleys in turn: a fan aimed at Link, an expanding ring, and a rain of orbs falling from above him.
+ */
+void Boss07_Mask_BoVolleys(Boss07* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    s32 fierce = Boss07_BoFierce(play);
+    Vec3f pos = this->actor.world.pos;
+    s16 yaw;
+    s16 pitch;
+    s32 i;
+    s32 count;
+
+    if (!BO_ATTACKS_ENABLED() || Play_InCsMode(play) || (this->actionFunc != Boss07_Mask_Idle) ||
+        ((s8)this->actor.colChkInfo.health <= 0)) {
+        return;
+    }
+
+    if (this->boVolleyTimer > 0) {
+        this->boVolleyTimer--;
+
+        if (this->boVolleyTimer == 20) {
+            // telegraph
+            this->maskShakeTimer = 20;
+            Actor_PlaySfx(&this->actor, NA_SE_EN_LAST1_GROW_HEAD);
+        }
+        return;
+    }
+
+    Boss07_BoAimAtPlayer(play, &pos, &yaw, &pitch);
+    Actor_PlaySfx(&this->actor, NA_SE_EN_LAST1_ATTACK_OLD);
+
+    switch (this->boVolleyPattern) {
+        case 0: // fan
+            count = fierce ? 7 : 5;
+            for (i = 0; i < count; i++) {
+                Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_REMAINS, &pos, yaw + ((i - (count / 2)) * 0xA00), pitch,
+                              24.0f);
+            }
+            break;
+
+        case 1: // ring
+            count = fierce ? 16 : 12;
+            for (i = 0; i < count; i++) {
+                Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw + (i * (0x10000 / count)), pitch,
+                              15.0f);
+            }
+            break;
+
+        default: // rain
+            count = fierce ? 9 : 6;
+            for (i = 0; i < count; i++) {
+                Vec3f dropPos;
+
+                dropPos.x = player->actor.world.pos.x + Rand_CenteredFloat(520.0f);
+                // stays below the height the mask and the Remains fly at, well clear of the ceiling
+                dropPos.y = player->actor.world.pos.y + 330.0f + (i * 40.0f);
+                dropPos.z = player->actor.world.pos.z + Rand_CenteredFloat(520.0f);
+                Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &dropPos, 0, -0x4000, 12.0f);
+            }
+            break;
+    }
+
+    this->boVolleyPattern = (this->boVolleyPattern + 1) % 3;
+    this->boVolleyTimer = 150;
+}
+
+/**
+ * Majora's Incarnation:
+ * - its pirouette sprays a spiral of orbs, two arms (four against Fierce Deity)
+ * - its moonwalk leaves slow drifting orbs behind it
+ * (the side shots added to its energy ball attack are in Boss07_Incarnation_Attack)
+ */
+void Boss07_Incarnation_BoExtras(Boss07* this, PlayState* play) {
+    s32 fierce = Boss07_BoFierce(play);
+    Vec3f pos = this->actor.focus.pos;
+    s16 yaw;
+    s16 pitch;
+    s32 i;
+
+    if (!BO_ATTACKS_ENABLED() || Play_InCsMode(play) || ((s8)this->actor.colChkInfo.health <= 0)) {
+        return;
+    }
+
+    if ((this->actionFunc == Boss07_Incarnation_Pirouette) && ((this->frameCounter % 6) == 0)) {
+        s32 arms = fierce ? 4 : 2;
+
+        Boss07_BoAimAtPlayer(play, &pos, &yaw, &pitch);
+        for (i = 0; i < arms; i++) {
+            Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos,
+                          this->boSpiralAngle + (i * (0x10000 / arms)), pitch, 13.0f);
+        }
+        this->boSpiralAngle += 0xC00;
+
+        if ((this->frameCounter % 24) == 0) {
+            Actor_PlaySfx(&this->actor, NA_SE_EN_LAST2_FIRE_OLD);
+        }
+    } else if ((this->actionFunc == Boss07_Incarnation_Moonwalk) && ((this->frameCounter % 20) == 0)) {
+        Boss07_BoAimAtPlayer(play, &pos, &yaw, &pitch);
+        Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw, pitch, 5.0f);
+        Actor_PlaySfx(&this->actor, NA_SE_EN_LAST2_FIRE_OLD);
+    }
+}
+
+// Side shots fired together with each of the Incarnation's vanilla energy balls.
+void Boss07_Incarnation_BoSideShots(Boss07* this, PlayState* play, Vec3f* handPos) {
+    Vec3f pos = *handPos;
+    s16 yaw;
+    s16 pitch;
+
+    if (!BO_ATTACKS_ENABLED()) {
+        return;
+    }
+
+    Boss07_BoAimAtPlayer(play, &pos, &yaw, &pitch);
+    Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw + 0x1400, pitch, 30.0f);
+    Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw - 0x1400, pitch, 30.0f);
+
+    if (Boss07_BoFierce(play)) {
+        Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw + 0x2800, pitch, 30.0f);
+        Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos, yaw - 0x2800, pitch, 30.0f);
+    }
+}
+
+// True while a Remains actor is flying around (not dead or dying).
+s32 Boss07_BoRemainsAlive(Boss07* remains) {
+    if (remains == NULL) {
+        return false;
+    }
+
+    if (remains->actionFunc == Boss07_Remains_Stunned) {
+        return true;
+    }
+
+    return (remains->actionFunc == Boss07_Remains_Move) && (remains->subAction != REMAINS_MOVE_SUB_ACTION_WAIT) &&
+           (remains->subAction != REMAINS_MOVE_SUB_ACTION_DIE) && (remains->subAction != REMAINS_MOVE_SUB_ACTION_DEAD);
+}
+
+/**
+ * Brings one of the Remains back into the fight above the arena. Only one of each kind is ever alive, so Wrath's death
+ * (which knocks down every entry of sMajoraRemains) takes all of them down with it.
+ */
+void Boss07_Wrath_BoSummonRemains(Boss07* this, PlayState* play, s32 remainsType) {
+    Boss07* remains;
+    Vec3f pos;
+    s16 yaw = (s16)((remainsType * 0x4000) + Rand_CenteredFloat(0x2000));
+
+    if (Boss07_BoRemainsAlive(sMajoraRemains[remainsType])) {
+        return;
+    }
+
+    pos.x = Math_SinS(yaw) * 600.0f;
+    pos.y = 350.0f;
+    pos.z = Math_CosS(yaw) * 600.0f;
+
+    remains = (Boss07*)Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, pos.x, pos.y, pos.z, 0, 0, 0,
+                                   MAJORA_PARAMS(MAJORA_TYPE_REMAINS + remainsType));
+
+    if (remains != NULL) {
+        Actor_SetScale(&remains->actor, 0.03f);
+        remains->actor.world.pos = pos;
+        remains->actor.shape.rot.y = yaw + 0x8000;
+        Boss07_Remains_SetupMove(remains, play);
+        remains->subAction = REMAINS_MOVE_SUB_ACTION_DETACH_FROM_WALL;
+        Actor_ChangeCategory(play, &play->actorCtx, &remains->actor, ACTORCAT_ENEMY);
+        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_CLEAR_TAG, pos.x, pos.y, pos.z, 0, 0, 0,
+                    CLEAR_TAG_PARAMS(CLEAR_TAG_LARGE_LIGHT_RAYS));
+    }
+}
+
+/**
+ * Majora's Wrath:
+ * - at 3/4, 1/2 and 1/4 health it summons the Remains: Odolwa and Goht, then Gyorg and Twinmold, then all four (all
+ *   four every time against Fierce Deity)
+ * - its spin attack flings orbs in all directions
+ * (the whip-crack bolts are fired from Boss07_Wrath_Update when a whip hits the floor)
+ */
+void Boss07_Wrath_BoExtras(Boss07* this, PlayState* play) {
+    static s32 sWaveRemains[3][MAJORA_REMAINS_TYPE_MAX] = {
+        { true, false, true, false },
+        { false, true, false, true },
+        { true, true, true, true },
+    };
+    s32 fierce = Boss07_BoFierce(play);
+    s32 health = (s8)this->actor.colChkInfo.health;
+    s32 maxHealth = BO_HP3(40);
+    s32 i;
+
+    if (!BO_ATTACKS_ENABLED() || Play_InCsMode(play) || (health <= 0) || this->shouldStartDeath ||
+        (this->actionFunc == Boss07_Wrath_IntroCutscene) || (this->actionFunc == Boss07_Wrath_DeathCutscene)) {
+        return;
+    }
+
+    if ((this->boSummonWave < 3) && (health <= ((maxHealth * (3 - this->boSummonWave)) / 4))) {
+        for (i = 0; i < MAJORA_REMAINS_TYPE_MAX; i++) {
+            if (fierce || sWaveRemains[this->boSummonWave][i]) {
+                Boss07_Wrath_BoSummonRemains(this, play, i);
+            }
+        }
+
+        Audio_PlaySfx_AtPos(&sMajoraSfxPos, NA_SE_EN_LAST3_VOICE_LAUGH_OLD);
+        this->boSummonWave++;
+    }
+
+    if ((this->actionFunc == Boss07_Wrath_Attack) && (this->subAction == MAJORAS_WRATH_ATTACK_SUB_ACTION_SPIN_ATTACK) &&
+        (this->frameCounter > 16) && (this->frameCounter <= 40) && ((this->frameCounter % 8) == 0)) {
+        Vec3f pos = this->actor.world.pos;
+        s32 count = fierce ? 6 : 4;
+
+        pos.y += 45.0f; // flat, at Link's chest height
+
+        for (i = 0; i < count; i++) {
+            Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_INCARNATION, &pos,
+                          (this->frameCounter * 0x1000) + (i * (0x10000 / count)), 0, 14.0f);
+        }
+    }
+}
+
+// A fan of bolts that races out of the tip of the whip when it cracks against the floor.
+void Boss07_Wrath_BoWhipBolts(Boss07* this, PlayState* play) {
+    s32 tipIndex = CLAMP((sWhipLength - 2) - this->whipTopIndex, 0, MAJORA_WHIP_LENGTH_MAX - 1);
+    Vec3f pos = this->rightWhip.pos[tipIndex];
+    s32 count = Boss07_BoFierce(play) ? 5 : 3;
+    s16 yaw;
+    s16 pitch;
+    s32 i;
+
+    if (!BO_ATTACKS_ENABLED()) {
+        return;
+    }
+
+    pos.y = MAX(pos.y, this->actor.world.pos.y) + 45.0f;
+    Boss07_BoAimAtPlayer(play, &pos, &yaw, &pitch);
+
+    for (i = 0; i < count; i++) {
+        Boss07_BoFire(play, MAJORA_TYPE_PROJECTILE_REMAINS, &pos, yaw + ((i - (count / 2)) * 0xC00), 0, 18.0f);
+    }
+}
+
 void Boss07_Init(Actor* thisx, PlayState* play2) {
     static s16 sMajoraRemainsParams[MAJORA_REMAINS_TYPE_MAX] = {
         MAJORA_PARAMS(MAJORA_TYPE_REMAINS + MAJORA_REMAINS_TYPE_ODOLWA),
@@ -1473,7 +1753,8 @@ void Boss07_Init(Actor* thisx, PlayState* play2) {
 
             Collider_InitAndSetQuad(play, &this->maskFrontCollider, &this->actor, &sMaskFrontQuadInit);
             Collider_InitAndSetQuad(play, &this->maskBackCollider, &this->actor, &sMaskBackQuadInit);
-            this->actor.colChkInfo.health = 14;
+            this->actor.colChkInfo.health = BO_HP3(14);
+            this->boVolleyTimer = 200;
 
             for (i = 0; i < MAJORA_REMAINS_TYPE_MAX; i++) {
                 Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, 0.0f, 0.0f, 0.0f, 0, 0, 0, sMajoraRemainsParams[i]);
@@ -1496,7 +1777,7 @@ void Boss07_Init(Actor* thisx, PlayState* play2) {
             this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
         } else {
             this->actor.colChkInfo.damageTable = &sMajorasIncarnationDamageTable;
-            this->actor.colChkInfo.health = 30;
+            this->actor.colChkInfo.health = BO_HP3(30);
             this->actor.update = Boss07_Incarnation_Update;
             this->actor.draw = Boss07_Incarnation_Draw;
             Collider_InitAndSetJntSph(play, &this->bodyCollider, &this->actor, &sIncarnationBodyColliderJntSphInit,
@@ -1526,7 +1807,7 @@ void Boss07_Init(Actor* thisx, PlayState* play2) {
     }
 
     sMajorasWrath = this;
-    this->actor.colChkInfo.health = 40;
+    this->actor.colChkInfo.health = BO_HP3(40);
     this->actor.colChkInfo.damageTable = &sMajorasWrathDamageTable;
     Actor_SetScale(&this->actor, 0.01f);
     this->subCamId = this->actor.shape.rot.z;
@@ -1577,6 +1858,12 @@ void Boss07_Init(Actor* thisx, PlayState* play2) {
 void Boss07_Destroy(Actor* thisx, PlayState* play2) {
     PlayState* play = play2;
     Boss07* this = (Boss07*)thisx;
+
+    // Boss Overhaul: the mask is killed when it turns into the Incarnation, but the Remains still read it when they fire.
+    // Forget it here so summoned Remains (and any Remains outliving the mask) never read a freed actor.
+    if (this == sMajorasMask) {
+        sMajorasMask = NULL;
+    }
 
     switch (this->actor.params) {
         //! @bug this should be MAJORAS_MASK
@@ -2080,9 +2367,9 @@ void Boss07_Wrath_Idle(Boss07* this, PlayState* play) {
     } else if (this->timers[0] == 0) {
         if (KREG(78) == 1) {
             Boss07_Wrath_SetupThrowTop(this, play);
-        } else if ((s8)this->actor.colChkInfo.health >= 28) {
+        } else if ((s8)this->actor.colChkInfo.health >= BO_HP3(28)) {
             Boss07_Wrath_SetupAttack(this, play);
-        } else if (((s8)this->actor.colChkInfo.health <= 12) && (Rand_ZeroOne() < 0.65f)) {
+        } else if (((s8)this->actor.colChkInfo.health <= BO_HP3(12)) && (Rand_ZeroOne() < 0.65f)) {
             Boss07_Wrath_SetupThrowTop(this, play);
         } else if (Rand_ZeroOne() < 0.3f) {
             Boss07_Wrath_SetupTryGrab(this, play);
@@ -2263,7 +2550,7 @@ void Boss07_Wrath_SetupAttack(Boss07* this, PlayState* play) {
     } else {
         this->subAction = Rand_ZeroFloat(MAJORAS_WRATH_ATTACK_SUB_ACTION_WHIP_ATTACK_MAX - 0.01f);
 
-        if (((s8)this->actor.colChkInfo.health >= 28) &&
+        if (((s8)this->actor.colChkInfo.health >= BO_HP3(28)) &&
             ((this->subAction == MAJORAS_WRATH_ATTACK_SUB_ACTION_FLURRY) ||
              (this->subAction == MAJORAS_WRATH_ATTACK_SUB_ACTION_DOUBLE_WHIP))) {
             this->subAction = MAJORAS_WRATH_ATTACK_SUB_ACTION_QUICK_WHIP;
@@ -2778,6 +3065,8 @@ void Boss07_Wrath_Stunned(Boss07* this, PlayState* play) {
 }
 
 void Boss07_Wrath_SetupDamaged(Boss07* this, PlayState* play, u8 damage, u8 dmgEffect) {
+    damage = BoMM_MajoraDamage(play, damage); // Boss Overhaul: half damage from Fierce Deity
+
     if ((s8)this->actor.colChkInfo.health >= 0) {
         this->actor.colChkInfo.health -= damage;
     }
@@ -3176,6 +3465,7 @@ void Boss07_Wrath_Update(Actor* thisx, PlayState* play2) {
         Math_ApproachZeroF(&this->shockSparkScale, 1.0f, 0.04f);
 
         this->actionFunc(this, play);
+        Boss07_Wrath_BoExtras(this, play);
 
         Actor_MoveWithGravity(&this->actor);
         Actor_UpdateBgCheckInfo(play, &this->actor, 50.0f, 100.0f, 100.0f,
@@ -3186,6 +3476,7 @@ void Boss07_Wrath_Update(Actor* thisx, PlayState* play2) {
 
             if ((this->actionFunc == Boss07_Wrath_Attack) && (this->whipCrackTimer == 0)) {
                 Audio_PlaySfx(NA_SE_EN_LAST3_ROD_FLOOR_OLD);
+                Boss07_Wrath_BoWhipBolts(this, play);
             }
         }
     } else {
@@ -4376,6 +4667,8 @@ void Boss07_Incarnation_Stunned(Boss07* this, PlayState* play) {
 }
 
 void Boss07_Incarnation_SetupDamaged(Boss07* this, PlayState* play, u8 damage, u8 dmgEffect) {
+    damage = BoMM_MajoraDamage(play, damage); // Boss Overhaul: half damage from Fierce Deity
+
     if (this->actionFunc != Boss07_Incarnation_Damaged) {
         this->actionFunc = Boss07_Incarnation_Damaged;
         Animation_MorphToPlayOnce(&this->skelAnime, &gMajorasIncarnationDamagedAnim, -2.0f);
@@ -4503,12 +4796,14 @@ void Boss07_Incarnation_Attack(Boss07* this, PlayState* play) {
         Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, this->incarnationLeftHandPos.x,
                     this->incarnationLeftHandPos.y, this->incarnationLeftHandPos.z, 0, 0, 0,
                     MAJORA_PARAMS(MAJORA_TYPE_PROJECTILE_INCARNATION));
+        Boss07_Incarnation_BoSideShots(this, play, &this->incarnationLeftHandPos);
     }
 
     if (Animation_OnFrame(&this->skelAnime, 9.0f)) {
         Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, this->incarnationRightHandPos.x,
                     this->incarnationRightHandPos.y, this->incarnationRightHandPos.z, 0, 0, 0,
                     MAJORA_PARAMS(MAJORA_TYPE_PROJECTILE_INCARNATION));
+        Boss07_Incarnation_BoSideShots(this, play, &this->incarnationRightHandPos);
     }
 
     if (this->timers[0] == 0) {
@@ -4946,6 +5241,7 @@ void Boss07_Incarnation_Update(Actor* thisx, PlayState* play2) {
         Math_ApproachZeroF(&this->shockSparkScale, 1.0f, 0.04f);
 
         this->actionFunc(this, play);
+        Boss07_Incarnation_BoExtras(this, play);
 
         Actor_MoveWithGravity(&this->actor);
         Actor_UpdateBgCheckInfo(play, &this->actor, 50.0f, 200.0f, 100.0f,
@@ -5246,7 +5542,9 @@ void Boss07_Mask_Idle(Boss07* this, PlayState* play) {
     Actor_PlaySfx(&this->actor, NA_SE_EN_LAST1_FLOAT_OLD - SFX_FLAG);
     if (this->timers[0] == 0) {
         if (this->timers[2] == 0) {
-            if (((s8)this->actor.colChkInfo.health <= 8) && (player->transformation != PLAYER_FORM_FIERCE_DEITY) &&
+            // Boss Overhaul: against Fierce Deity the mask no longer holds back its fire beam
+            if (((s8)this->actor.colChkInfo.health <= BO_HP3(8)) &&
+                ((player->transformation != PLAYER_FORM_FIERCE_DEITY) || Boss07_BoFierce(play)) &&
                 (Rand_ZeroOne() < 0.75f)) {
                 Boss07_Mask_SetupFireBeam(this, play);
             } else {
@@ -5437,6 +5735,8 @@ void Boss07_Mask_Stunned(Boss07* this, PlayState* play) {
 void Boss07_Mask_SetupDamaged(Boss07* this, PlayState* play, u8 damage, Actor* hitActor) {
     Player* player = GET_PLAYER(play);
 
+    damage = BoMM_MajoraDamage(play, damage); // Boss Overhaul: half damage from Fierce Deity
+
     this->actionFunc = Boss07_Mask_Damaged;
     this->timers[0] = 40;
 
@@ -5486,7 +5786,7 @@ void Boss07_Mask_Damaged(Boss07* this, PlayState* play) {
         this->maskEyeTexIndex = MAJORAS_MASK_EYE_DULL;
     }
 
-    if ((this->timers[0] == 15) && ((s8)this->actor.colChkInfo.health < 10)) {
+    if ((this->timers[0] == 15) && ((s8)this->actor.colChkInfo.health < BO_HP3(10))) {
         this->startRemainsCs = true;
     }
 
@@ -6372,6 +6672,7 @@ void Boss07_Mask_Update(Actor* thisx, PlayState* play2) {
             this->beamTireMarkEnabled = false;
 
             this->actionFunc(this, play);
+            Boss07_Mask_BoVolleys(this, play);
 
             if (!this->beamTireMarkEnabled && this->prevBeamTireMarkEnabled) {
                 func_800AEF44(Effect_GetByIndex(this->effectIndex));
@@ -7179,7 +7480,8 @@ void Boss07_Remains_Move(Boss07* this, PlayState* play) {
     if (this->tryFireProjectile) {
         this->tryFireProjectile = false;
 
-        if (Boss07_ArePlayerAndActorFacing(this, play) && (sMajorasMask->actionFunc != Boss07_Mask_FireBeam)) {
+        if (Boss07_ArePlayerAndActorFacing(this, play) &&
+            ((sMajorasMask == NULL) || (sMajorasMask->actionFunc != Boss07_Mask_FireBeam))) {
             Actor_Spawn(&play->actorCtx, play, ACTOR_BOSS_07, this->actor.world.pos.x, this->actor.world.pos.y,
                         this->actor.world.pos.z, 0, 0, 0, MAJORA_PARAMS(MAJORA_TYPE_PROJECTILE_REMAINS));
         }

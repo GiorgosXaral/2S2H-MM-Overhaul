@@ -36,6 +36,7 @@
 
 #include "2s2h/BenPort.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -53,6 +54,9 @@ void Boss01_Destroy(Actor* thisx, PlayState* play);
 void Boss01_Update(Actor* thisx, PlayState* play2);
 void Boss01_Draw(Actor* thisx, PlayState* play);
 void Boss01_Reset(void);
+// Boss Overhaul: fire waves and flame rings
+void Boss01_BoOrbUpdate(Actor* thisx, PlayState* play);
+void Boss01_BoOrbDraw(Actor* thisx, PlayState* play);
 
 void Boss01_SetupIntroCutscene(Boss01* this, PlayState* play);
 void Boss01_IntroCutscene(Boss01* this, PlayState* play);
@@ -832,7 +836,7 @@ void Boss01_SelectAttack(Boss01* this, PlayState* play, u8 mustAttack) {
         } else {
             Boss01_SetupHorizontalSlash(this, play);
         }
-    } else if (((s8)this->actor.colChkInfo.health < 8) && (Rand_ZeroOne() < 0.75f)) {
+    } else if (((s8)this->actor.colChkInfo.health < BO_HP(8)) && (Rand_ZeroOne() < 0.75f)) {
         Boss01_SetupSpinAttack(this, play);
     } else {
         Boss01_SetupVerticalSlash(this, play);
@@ -874,6 +878,14 @@ void Boss01_Init(Actor* thisx, PlayState* play) {
     Boss01* this = (Boss01*)thisx;
     s32 pad;
     s16 i;
+
+    if (this->actor.params == BO_ORB_PARAMS) {
+        // Boss Overhaul: this instance is one of Odolwa's fireballs
+        BoOrb_Init(&this->actor, &this->boOrb, play);
+        this->actor.update = Boss01_BoOrbUpdate;
+        this->actor.draw = Boss01_BoOrbDraw;
+        return;
+    }
 
     Actor_SetScale(&this->actor, 0.015f);
     if (ODOLWA_GET_TYPE(&this->actor) == ODOLWA_TYPE_BUG) {
@@ -925,7 +937,7 @@ void Boss01_Init(Actor* thisx, PlayState* play) {
         this->actor.attentionRangeType = ATTENTION_RANGE_5;
         this->actor.colChkInfo.mass = MASS_HEAVY;
         this->actor.colChkInfo.damageTable = &sOdolwaDamageTable;
-        this->actor.colChkInfo.health = 20;
+        this->actor.colChkInfo.health = BO_HP(20);
 
         ActorShape_Init(&this->actor.shape, 0.0f, NULL, 0.0f);
         Collider_InitAndSetJntSph(play, &this->swordCollider, &this->actor, &sSwordColliderJntSphInit,
@@ -956,6 +968,94 @@ void Boss01_Init(Actor* thisx, PlayState* play) {
 }
 
 void Boss01_Destroy(Actor* thisx, PlayState* play) {
+    Boss01* this = (Boss01*)thisx;
+
+    if (this->actor.params == BO_ORB_PARAMS) {
+        BoOrb_Destroy(&this->actor, &this->boOrb, play);
+    }
+}
+
+void Boss01_BoOrbUpdate(Actor* thisx, PlayState* play) {
+    Boss01* this = (Boss01*)thisx;
+
+    BoOrb_Update(&this->actor, &this->boOrb, play);
+}
+
+void Boss01_BoOrbDraw(Actor* thisx, PlayState* play) {
+    Boss01* this = (Boss01*)thisx;
+
+    BoOrb_Draw(&this->actor, &this->boOrb, play);
+}
+
+// Boss Overhaul: Odolwa is enraged at or below half of his (possibly doubled) health.
+s32 Boss01_BoIsEnraged(Boss01* this) {
+    return BO_ATTACKS_ENABLED() && BO_AT_OR_BELOW_HALF((s8)this->actor.colChkInfo.health, BO_HP(20));
+}
+
+/**
+ * Boss Overhaul: when Odolwa brings his sword down from a distance, a fan of fire races along the floor at Link. Three
+ * flames, five once he is enraged. They burn out on their own after a while.
+ */
+void Boss01_BoFireWave(Boss01* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Vec3f from;
+    Vec3f to;
+    Vec3f velocity;
+    Boss01* orb;
+    s32 i;
+    s32 count;
+
+    if (!BO_ATTACKS_ENABLED() || (this->actor.xzDistToPlayer < 200.0f)) {
+        return;
+    }
+
+    count = Boss01_BoIsEnraged(this) ? 5 : 3;
+    from.x = this->actor.world.pos.x + (Math_SinS(this->actor.shape.rot.y) * 90.0f);
+    from.y = this->actor.floorHeight + 25.0f;
+    from.z = this->actor.world.pos.z + (Math_CosS(this->actor.shape.rot.y) * 90.0f);
+    to = player->actor.world.pos;
+    to.y = from.y;
+
+    for (i = 0; i < count; i++) {
+        BoOrb_AimVelocity(&from, &to, 16.0f, (s16)((i - (count / 2)) * 0x0900), &velocity);
+        velocity.y = 0.0f;
+        orb = (Boss01*)BoOrb_Spawn(play, ACTOR_BOSS_01, BO_ORB_FIRE, &from, &velocity);
+
+        if (orb != NULL) {
+            // hugs the floor, so only a wall puts it out
+            orb->boOrb.dieOnSurface = BO_ORB_DIE_ON_WALLS;
+            orb->boOrb.life = orb->boOrb.maxLife = 70;
+        }
+    }
+
+    Actor_PlaySfx(&this->actor, NA_SE_EV_FLAME_IGNITION);
+}
+
+/**
+ * Boss Overhaul: while spinning, Odolwa throws off a ring of embers every 24 frames.
+ */
+void Boss01_BoFlameRing(Boss01* this, PlayState* play) {
+    Vec3f from;
+    Vec3f velocity;
+    s32 i;
+    s16 baseYaw = this->actor.shape.rot.y;
+
+    if (!BO_ATTACKS_ENABLED()) {
+        return;
+    }
+
+    from.x = this->actor.world.pos.x;
+    from.y = this->actor.floorHeight + 50.0f;
+    from.z = this->actor.world.pos.z;
+
+    for (i = 0; i < 8; i++) {
+        s16 yaw = baseYaw + (i * 0x2000);
+
+        velocity.x = Math_SinS(yaw) * 13.0f;
+        velocity.y = 0.0f;
+        velocity.z = Math_CosS(yaw) * 13.0f;
+        BoOrb_Spawn(play, ACTOR_BOSS_01, BO_ORB_EMBER, &from, &velocity);
+    }
 }
 
 /**
@@ -1407,7 +1507,7 @@ void Boss01_Wait(Boss01* this, PlayState* play) {
     }
 
     if (((this->timers[TIMER_CURRENT_ACTION] % 16) == 0) && (this->waitType != ODOLWA_WAIT_READY) &&
-        (sOdolwaBugCount < 5)) {
+        (sOdolwaBugCount < (Boss01_BoIsEnraged(this) ? 8 : 5))) {
         Vec3f pos;
         Player* player2 = GET_PLAYER(play);
         s32 pad;
@@ -1491,6 +1591,10 @@ void Boss01_SpinAttack(Boss01* this, PlayState* play) {
     if (Animation_OnFrame(&this->skelAnime, 5.0f)) {
         Actor_PlaySfx(&this->actor, NA_SE_EN_MIBOSS_SWORD_OLD);
         Actor_PlaySfx(&this->actor, NA_SE_EN_MIBOSS_ROLLING_OLD);
+    }
+
+    if ((this->timers[TIMER_CURRENT_ACTION] % 24) == 12) {
+        Boss01_BoFlameRing(this, play);
     }
 
     if (this->timers[TIMER_CURRENT_ACTION] == 0) {
@@ -1740,6 +1844,7 @@ void Boss01_VerticalSlash(Boss01* this, PlayState* play) {
 
     if (Animation_OnFrame(&this->skelAnime, 14.0f)) {
         sSwordTrailAngularRangeDivisor = 7.0f;
+        Boss01_BoFireWave(this, play);
     }
 
     if (Animation_OnFrame(&this->skelAnime, 7.0f)) {

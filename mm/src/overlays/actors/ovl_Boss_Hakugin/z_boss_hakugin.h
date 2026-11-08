@@ -2,6 +2,7 @@
 #define Z_BOSS_HAKUGIN_H
 
 #include "global.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 #include "objects/object_boss_hakugin/object_boss_hakugin.h"
 #include "overlays/effects/ovl_Effect_Ss_Fhg_Flash/z_eff_ss_fhg_flash.h"
 
@@ -173,6 +174,10 @@ typedef struct BossHakugin {
     /* 0x3734 */ Vec3f electricBallPos[GOHT_ELECTRIC_BALL_COUNT_MAX];
     /* 0x37AC */ Vec3f electricBallRot;
     /* 0x37B8 */ ColliderSphere electricBallCollider;
-} BossHakugin; // size = 0x3810
+    // Boss Overhaul
+    s16 boMineTimer;
+    s16 boBallCooldown;
+    BoOrb boOrb;
+} BossHakugin; // size = 0x3810 (vanilla)
 
 #endif // Z_BOSS_HAKUGIN_H

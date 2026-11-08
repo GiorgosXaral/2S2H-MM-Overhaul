@@ -19,6 +19,7 @@
 #include "overlays/effects/ovl_Effect_Ss_Hitmark/z_eff_ss_hitmark.h"
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 
 #include "objects/gameplay_keep/gameplay_keep.h"
 
@@ -29,6 +30,9 @@
 #define GOHT_LIMB_DRAW_FLAG(limbIndex) (1 << ((limbIndex)-1))
 
 void BossHakugin_Init(Actor* thisx, PlayState* play2);
+// Boss Overhaul: electric mines
+void BossHakugin_BoOrbUpdate(Actor* thisx, PlayState* play);
+void BossHakugin_BoOrbDraw(Actor* thisx, PlayState* play);
 void BossHakugin_Destroy(Actor* thisx, PlayState* play);
 void BossHakugin_Update(Actor* thisx, PlayState* play);
 void func_80B0E548(Actor* thisx, PlayState* play2);
@@ -569,6 +573,14 @@ void BossHakugin_Init(Actor* thisx, PlayState* play2) {
     s32 pad;
     s32 i;
 
+    if (this->actor.params == BO_ORB_PARAMS) {
+        // Boss Overhaul: this instance is one of Goht's electric mines
+        BoOrb_Init(&this->actor, &this->boOrb, play);
+        this->actor.update = BossHakugin_BoOrbUpdate;
+        this->actor.draw = BossHakugin_BoOrbDraw;
+        return;
+    }
+
     Actor_ProcessInitChain(&this->actor, sInitChain);
     SkelAnime_InitFlex(play, &this->skelAnime, &gGohtSkel, &gGohtRunAnim, this->jointTable, this->morphTable,
                        GOHT_LIMB_MAX);
@@ -619,6 +631,9 @@ void BossHakugin_Init(Actor* thisx, PlayState* play2) {
     }
 
     CollisionCheck_SetInfo(&this->actor.colChkInfo, &sDamageTable, &sColChkInfoInit);
+    this->actor.colChkInfo.health = BO_HP(30);
+    this->boMineTimer = 100;
+    this->boBallCooldown = 200;
     this->baseRotY = this->actor.shape.rot.y;
     this->limbDrawFlags = 0xFFFFFFFF;
 
@@ -646,6 +661,11 @@ void BossHakugin_Destroy(Actor* thisx, PlayState* play) {
     s32 pad;
     s32 i;
 
+    if (this->actor.params == BO_ORB_PARAMS) {
+        BoOrb_Destroy(&this->actor, &this->boOrb, play);
+        return;
+    }
+
     LightContext_RemoveLight(play, &play->lightCtx, this->lightNode);
     Collider_DestroyJntSph(play, &this->bodyCollider);
     Collider_DestroyCylinder(play, &this->iceCollider);
@@ -657,6 +677,18 @@ void BossHakugin_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroySphere(play, &this->electricBallCollider);
     AudioSfx_StopByPos(&this->sfxPos);
     AudioSfx_StopByPos(&this->electricBallSfxPos);
+}
+
+void BossHakugin_BoOrbUpdate(Actor* thisx, PlayState* play) {
+    BossHakugin* this = (BossHakugin*)thisx;
+
+    BoOrb_Update(&this->actor, &this->boOrb, play);
+}
+
+void BossHakugin_BoOrbDraw(Actor* thisx, PlayState* play) {
+    BossHakugin* this = (BossHakugin*)thisx;
+
+    BoOrb_Draw(&this->actor, &this->boOrb, play);
 }
 
 s32 BossHakugin_Vec3fNormalize(Vec3f* vec) {
@@ -1141,7 +1173,8 @@ void BossHakugin_SpawnStalactite(BossHakugin* this) {
     Actor* stalactite;
     s32 i;
 
-    if ((this->preventStalactiteSpawnCount == 0) && (this->actor.colChkInfo.health < 20) && (Rand_ZeroOne() < 0.35f)) {
+    if ((this->preventStalactiteSpawnCount == 0) && (this->actor.colChkInfo.health < BO_HP(20)) &&
+        (Rand_ZeroOne() < 0.35f)) {
         this->preventStalactiteSpawnCount = 4;
     } else {
         if (this->preventStalactiteSpawnCount > 0) {
@@ -1173,7 +1206,9 @@ void BossHakugin_SpawnBomb(BossHakugin* this, PlayState* play) {
     EnBom* bomb;
     s16 yawDiff;
 
-    if ((this->actor.speed > 10.0f) && ((s32)this->actor.colChkInfo.health < 10) &&
+    // Boss Overhaul: with extra attacks, Goht starts throwing bombs at half health instead of a third
+    if ((this->actor.speed > 10.0f) &&
+        ((s32)this->actor.colChkInfo.health < (BO_ATTACKS_ENABLED() ? BO_HP(15) : BO_HP(10))) &&
         (this->preventBombSpawnCount == 0) && (Rand_ZeroOne() < 0.35f)) {
         this->preventBombSpawnCount = 4;
     } else {
@@ -1236,7 +1271,7 @@ void BossHakugin_AddMalfunctionEffects(BossHakugin* this, PlayState* play) {
     }
 
     for (type = 0; type < GOHT_MALFUNCTION_NUM_TYPES; type++) {
-        if (((15 - (3 * type)) < this->actor.colChkInfo.health) ||
+        if ((BO_HP(15 - (3 * type)) < this->actor.colChkInfo.health) ||
             !(GOHT_LIMB_DRAW_FLAG(sMalfunctionTypeToLimbIndex[type]) & this->limbDrawFlags)) {
             break;
         }
@@ -1886,6 +1921,63 @@ void BossHakugin_IntroCutsceneRun(BossHakugin* this, PlayState* play) {
     }
 }
 
+/**
+ * Boss Overhaul, while Goht runs:
+ * - Electric mines: every 100 frames Goht leaves a floating ball of lightning on the track behind it that hangs there
+ *   for three seconds, so a chasing Goron Link has to steer around it. Two side by side once Goht is at half health.
+ * - At half health Goht no longer waits to be spiked before firing its homing electric ball; it fires one on its own
+ *   whenever the last one is gone and the cooldown has run out.
+ */
+void BossHakugin_BoRunExtras(BossHakugin* this, PlayState* play) {
+    s32 enraged;
+
+    if (!BO_ATTACKS_ENABLED()) {
+        return;
+    }
+
+    enraged = BO_AT_OR_BELOW_HALF(this->actor.colChkInfo.health, BO_HP(30));
+
+    if (this->boMineTimer > 0) {
+        this->boMineTimer--;
+    } else if (this->actor.speed > 10.0f) {
+        Vec3f minePos;
+        s32 i;
+        s32 count = enraged ? 2 : 1;
+        f32 side = Rand_CenteredFloat(160.0f);
+
+        for (i = 0; i < count; i++) {
+            BossHakugin* mine;
+            f32 offset = (count == 1) ? side : ((i == 0) ? -110.0f : 110.0f);
+
+            minePos.x = this->actor.world.pos.x - (Math_SinS(this->actor.shape.rot.y) * 250.0f) +
+                        (Math_CosS(this->actor.shape.rot.y) * offset);
+            minePos.y = this->actor.world.pos.y + 50.0f;
+            minePos.z = this->actor.world.pos.z - (Math_CosS(this->actor.shape.rot.y) * 250.0f) -
+                        (Math_SinS(this->actor.shape.rot.y) * offset);
+
+            mine = (BossHakugin*)BoOrb_Spawn(play, ACTOR_BOSS_HAKUGIN, BO_ORB_ELECTRIC, &minePos, &gZeroVec3f);
+
+            if (mine != NULL) {
+                mine->boOrb.life = mine->boOrb.maxLife = 180;
+                mine->boOrb.dieOnSurface = BO_ORB_DIE_NEVER;
+                mine->boOrb.drawScale = 5.0f;
+            }
+        }
+
+        Audio_PlaySfx_AtPos(&this->sfxPos, NA_SE_EN_COMMON_THUNDER_THR);
+        this->boMineTimer = 100;
+    }
+
+    if (this->boBallCooldown > 0) {
+        this->boBallCooldown--;
+    } else if (enraged && (this->electricBallState == GOHT_ELECTRIC_BALL_STATE_NONE) &&
+               (this->electricBallCount == 0)) {
+        this->chargeUpTimer = 5;
+        this->electricBallState = GOHT_ELECTRIC_BALL_STATE_CHARGE;
+        this->boBallCooldown = 300;
+    }
+}
+
 void BossHakugin_SetupRun(BossHakugin* this) {
     Animation_Change(&this->skelAnime, &gGohtRunAnim, 1.0f, 0.0f, 0.0f, ANIMMODE_LOOP_INTERP, -5.0f);
     this->runOffsetRot = 0;
@@ -1954,7 +2046,7 @@ void BossHakugin_Run(BossHakugin* this, PlayState* play) {
                     this->targetSpeed = 14.5f;
                 }
 
-                this->targetSpeed += (30 - this->actor.colChkInfo.health) * (1.0f / 30.0f);
+                this->targetSpeed += (BO_HP(30) - this->actor.colChkInfo.health) * (1.0f / BO_HP(30));
                 this->timer = 40;
             }
         }
@@ -1962,6 +2054,7 @@ void BossHakugin_Run(BossHakugin* this, PlayState* play) {
         this->skelAnime.playSpeed = (this->actor.speed / 32.0f) + 0.5f;
         SkelAnime_Update(&this->skelAnime);
         BossHakugin_RunUpdateCommon(this, play);
+        BossHakugin_BoRunExtras(this, play);
 
         if ((this->distToRightWall < (this->distToLeftWall * 0.5f)) || (this->distToRightWall < (89100.0f * 0.001f))) {
             this->targetRotY = (Rand_ZeroFloat(0.4f) + 0.6f) * 1536.0f;

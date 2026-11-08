@@ -2,6 +2,7 @@
 #define Z_BOSS_02_H
 
 #include "global.h"
+#include "2s2h/Enhancements/BossOverhaul/BossOverhaul.h"
 #include "objects/object_boss02/object_boss02.h"
 
 struct Boss02;
@@ -9,6 +10,39 @@ struct Boss02;
 #define TWINMOLD_GET_TYPE(thisx) ((thisx)->params)
 
 typedef void (*Boss02ActionFunc)(struct Boss02*, PlayState*);
+
+// Boss Overhaul: an instance of Boss02 spawned with these params is one of the twin dragons' projectiles
+#define BO_TM_SHOT_PARAMS 151
+
+typedef enum Boss02BoElement {
+    /* 0 */ BO_TM_FIRE, // Red Twinmold
+    /* 1 */ BO_TM_ICE   // Blue Twinmold
+} Boss02BoElement;
+
+typedef enum Boss02BoShotKind {
+    /* 0 */ BO_TM_SHOT_SPARK,   // visual only: a ball spat into the sky to call down a storm
+    /* 1 */ BO_TM_SHOT_BREATH,  // one ball of a breath stream
+    /* 2 */ BO_TM_SHOT_LOB,     // thrown out of an eruption
+    /* 3 */ BO_TM_SHOT_FALLING, // a meteor or a giant icicle: its landing spot is marked, then it drops from the sky
+    /* 4 */ BO_TM_SHOT_PATCH    // burning or frozen ground left behind by the big attacks
+} Boss02BoShotKind;
+
+typedef struct Boss02BoShot {
+    ColliderCylinder collider;
+    Vec3f target;    // falling: the landing spot
+    f32 size;        // grows from 0 to 1
+    f32 gravity;     // added to velocity.y every frame
+    f32 hitRadius;
+    s16 kind;        // Boss02BoShotKind
+    s16 phase;
+    s16 timer;       // counts up
+    s16 life;        // counts down
+    s16 spin;
+    s16 hitCooldown; // patches: frames before it can hurt again
+    u8 element;      // Boss02BoElement
+    u8 giant;        // spawned in the Giant's Mask arena
+    u8 leavesPatch;  // burns / freezes the ground where it lands
+} Boss02BoShot;
 
 typedef struct {
     /* 0x00 */ Vec3f pos;
@@ -112,6 +146,22 @@ typedef struct Boss02 {
     /* 0x1D7A */ s16 giantsMaskCsFlashAlpha;
     /* 0x1D7C */ s16 unk_1D7C;
     /* 0x1D7E */ s16 unk_1D7E;
-} Boss02; // size = 0x1D80
+    // Boss Overhaul: the twin dragons
+    s16 boWindupTimer;    // > 0 while gathering a breath
+    s16 boBreathTimer;    // > 0 while breathing
+    s16 boBreathCooldown;
+    s16 boEruptCooldown;
+    s16 boRainCooldown;
+    u8 boBreathElement;   // element of the current / next breath (the survivor alternates)
+    u8 boRainFlip;
+    u8 boLastGiantMode;
+    f32 boGlow;           // 0..1: the jaws glow and light up the arena while a breath gathers and pours out
+    f32 boSpeedScale;     // flying speed multiplier: the dragon slows down while it breathes
+    Vec3f boBreathTarget;
+    Vec3f boMouthPos;     // from the last draw
+    LightNode* boLightNode;
+    LightInfo boLightInfo;
+    Boss02BoShot boShot;  // state of an instance spawned as a projectile (BO_TM_SHOT_PARAMS)
+} Boss02; // size = 0x1D80 (vanilla)
 
 #endif // Z_BOSS_02_H

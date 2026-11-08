@@ -35,6 +35,31 @@ typedef struct EnMThunder {
     /* 0x1C0 */ u8 chargingAlpha;
     /* 0x1C1 */ u8 scaleTarget;
     /* 0x1C2 */ u8 isCharging;
-} EnMThunder; // size = 0x1C4
+    // Sword projectiles (Enhancements > Items > Sword Projectiles), only used when ENMTHUNDER_IS_SWORD_SHOT
+    s16 shotTimer;
+    s16 shotCooldown;
+    s16 shotSpin;
+    u8 shotKind;
+} EnMThunder;
+
+typedef enum EnMThunderShotKind {
+    /* 0 */ ENMTHUNDER_SHOT_GILDED,      // golden crescent: one hit, like the Master Sword beam of Ocarina of Time
+    /* 1 */ ENMTHUNDER_SHOT_GREAT_FAIRY, // spinning ring: slower, bigger, goes through enemies
+    /* 2 */ ENMTHUNDER_SHOT_DEITY,       // deity orb: fastest, bursts on impact
+    /* 3 */ ENMTHUNDER_SHOT_DEITY_BURST, // the burst left by a deity orb
+    /* 4 */ ENMTHUNDER_SHOT_MAX
+} EnMThunderShotKind;
+
+// An En_M_Thunder spawned with these params is a sword projectile instead of a spin attack. Vanilla params are
+// (magic cost << 8) | sword type, which never reach these values.
+#define ENMTHUNDER_SWORD_SHOT_PARAMS(kind) (0x7B10 + (kind))
+#define ENMTHUNDER_IS_SWORD_SHOT(thisx) \
+    (((thisx)->params >= ENMTHUNDER_SWORD_SHOT_PARAMS(0)) && \
+     ((thisx)->params < ENMTHUNDER_SWORD_SHOT_PARAMS(ENMTHUNDER_SHOT_MAX)))
+
+// Called by Player when a sword swing becomes active: fires the held sword's projectile if the conditions are met.
+void EnMThunder_TrySwordShot(PlayState* play, Player* player);
+// True when the Fierce Deity's vanilla sword beam is replaced by the deity orb.
+s32 EnMThunder_DeityShotReplacesBeam(void);
 
 #endif // Z_EN_M_THUNDER_H

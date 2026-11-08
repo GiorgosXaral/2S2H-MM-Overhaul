@@ -11,6 +11,7 @@
 
 #include "2s2h/BenGui/CosmeticEditor.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
@@ -99,10 +100,379 @@ void EnMThunder_UnkType_Setup(EnMThunder* this, PlayState* play) {
     this->actor.child = NULL;
 }
 
+/* ---------------------------------------------------------------------------------------------------------------
+ * Sword projectiles (Enhancements > Items > Sword Projectiles)
+ *
+ *  - Gilded Sword, full hearts: a golden crescent. One hit for Gilded Sword slash damage, then it is gone. The same
+ *    level of power as the Master Sword beam of the Ship of Harkinian build.
+ *  - Great Fairy's Sword, full hearts: a spinning ring, slower and bigger, that cuts through every enemy in its path for
+ *    Great Fairy's Sword slash damage.
+ *  - Fierce Deity, any health: replaces the vanilla sword beam. Every normal slash (no lock-on needed) throws a deity
+ *    orb for 1 magic, the fastest and hardest hitting of the three, which bursts on impact and hurts everything around.
+ *
+ * Normal slashes only; jump attacks and spin attacks stay vanilla. One projectile flies at a time. Everything is drawn
+ * with gameplay_keep models (sword beam, spin attack disk, great spin, light orb), so no new assets are needed.
+ * --------------------------------------------------------------------------------------------------------------- */
+
+#define SWORD_SHOT_CVAR "gEnhancements.SwordProjectiles.Enabled"
+
+typedef struct SwordShotInfo {
+    u32 dmgFlags;
+    u8 damage;
+    s16 life;
+    f32 speed;
+    f32 scale;
+    s16 radius;
+    s16 height;
+    Color_RGB8 prim;
+    Color_RGB8 env;
+} SwordShotInfo;
+
+static SwordShotInfo sSwordShotInfo[ENMTHUNDER_SHOT_MAX] = {
+    // Gilded Sword: Gilded Sword slash damage (3), one hit
+    { DMG_SWORD, 3, 22, 28.0f, 7.0f, 34, 40, { 255, 240, 150 }, { 255, 150, 0 } },
+    // Great Fairy's Sword: Great Fairy's Sword slash damage (4), pierces
+    { DMG_SWORD, 4, 30, 18.0f, 1.6f, 48, 36, { 255, 170, 240 }, { 220, 40, 180 } },
+    // Fierce Deity orb: 6 (the vanilla deity beam does 3), bursts on impact
+    { DMG_SWORD_BEAM, 6, 24, 36.0f, 7.0f, 30, 40, { 230, 255, 255 }, { 0, 200, 255 } },
+    // Fierce Deity burst: 4 to everything around the impact
+    { DMG_SWORD_BEAM, 4, 14, 0.0f, 3.0f, 90, 80, { 200, 255, 255 }, { 0, 120, 255 } },
+};
+
+static ColliderCylinderInit sSwordShotCylinderInit = {
+    {
+        COL_MATERIAL_NONE,
+        AT_ON | AT_TYPE_PLAYER,
+        AC_NONE,
+        OC1_NONE,
+        OC2_TYPE_1,
+        COLSHAPE_CYLINDER,
+    },
+    {
+        ELEM_MATERIAL_UNK2,
+        { DMG_SWORD, 0x00, 0x03 },
+        { 0xF7CFFFFF, 0x00, 0x00 },
+        ATELEM_ON | ATELEM_SFX_NORMAL,
+        ACELEM_NONE,
+        OCELEM_NONE,
+    },
+    { 30, 40, -20, { 0, 0, 0 } },
+};
+
+s32 EnMThunder_DeityShotReplacesBeam(void) {
+    return CVarGetInteger(SWORD_SHOT_CVAR, 1) != 0;
+}
+
+static s32 EnMThunder_SwordShotFlying(PlayState* play) {
+    Actor* actor = play->actorCtx.actorLists[ACTORCAT_ITEMACTION].first;
+
+    while (actor != NULL) {
+        if ((actor->id == ACTOR_EN_M_THUNDER) && (actor->update != NULL) && ENMTHUNDER_IS_SWORD_SHOT(actor) &&
+            (actor->params != ENMTHUNDER_SWORD_SHOT_PARAMS(ENMTHUNDER_SHOT_DEITY_BURST))) {
+            return true;
+        }
+        actor = actor->next;
+    }
+    return false;
+}
+
+static Actor* EnMThunder_SpawnSwordShot(PlayState* play, s32 kind, Vec3f* pos, s16 pitch, s16 yaw) {
+    return Actor_Spawn(&play->actorCtx, play, ACTOR_EN_M_THUNDER, pos->x, pos->y, pos->z, pitch, yaw, 0,
+                       ENMTHUNDER_SWORD_SHOT_PARAMS(kind));
+}
+
+void EnMThunder_TrySwordShot(PlayState* play, Player* player) {
+    Actor* shot;
+    s32 kind;
+    Vec3f pos;
+    s16 pitch = 0;
+    s16 yaw;
+    s32 fullHealth;
+
+    if ((play == NULL) || (player == NULL) || (player->actor.id != ACTOR_PLAYER)) {
+        return;
+    }
+    if (!CVarGetInteger(SWORD_SHOT_CVAR, 1)) {
+        return;
+    }
+    // Normal slashes, stabs and combo finishers only: jump attacks and spin attacks stay vanilla
+    if (!((player->meleeWeaponAnimation <= PLAYER_MWA_STAB_COMBO_2H) ||
+          (player->meleeWeaponAnimation == PLAYER_MWA_BACKSLASH_RIGHT) ||
+          (player->meleeWeaponAnimation == PLAYER_MWA_BACKSLASH_LEFT))) {
+        return;
+    }
+
+    fullHealth = gSaveContext.save.saveInfo.playerData.health >= gSaveContext.save.saveInfo.playerData.healthCapacity;
+
+    if (player->transformation == PLAYER_FORM_FIERCE_DEITY) {
+        kind = ENMTHUNDER_SHOT_DEITY;
+    } else if ((player->transformation == PLAYER_FORM_HUMAN) && (player->heldItemAction == PLAYER_IA_SWORD_GILDED) &&
+               fullHealth) {
+        kind = ENMTHUNDER_SHOT_GILDED;
+    } else if ((player->transformation == PLAYER_FORM_HUMAN) &&
+               (player->heldItemAction == PLAYER_IA_SWORD_TWO_HANDED) && fullHealth) {
+        kind = ENMTHUNDER_SHOT_GREAT_FAIRY;
+    } else {
+        return;
+    }
+
+    if (EnMThunder_SwordShotFlying(play)) {
+        return;
+    }
+
+    // The deity orb costs 1 magic, like the vanilla deity beam it replaces
+    if ((kind == ENMTHUNDER_SHOT_DEITY) &&
+        ((gSaveContext.save.saveInfo.playerData.magic == 0) ||
+         ((gSaveContext.magicState != MAGIC_STATE_IDLE) && (gSaveContext.magicState != MAGIC_STATE_CONSUME_LENS)))) {
+        return;
+    }
+
+    yaw = player->actor.shape.rot.y;
+    pos = player->bodyPartsPos[PLAYER_BODYPART_WAIST];
+    pos.x += Math_SinS(yaw) * 25.0f;
+    pos.y += 12.0f;
+    pos.z += Math_CosS(yaw) * 25.0f;
+
+    // When locked on, aim up or down at the target (the ring tilts with the shot)
+    if (player->focusActor != NULL) {
+        pitch = Math_Vec3f_Pitch(&pos, &player->focusActor->focus.pos);
+        pitch = CLAMP(pitch, -0x2000, 0x2000);
+    }
+
+    shot = EnMThunder_SpawnSwordShot(play, kind, &pos, pitch, yaw);
+
+    // Magic is only spent once the orb exists (like the vanilla beam)
+    if ((shot != NULL) && (kind == ENMTHUNDER_SHOT_DEITY) && !Magic_Consume(play, 1, MAGIC_CONSUME_DEITY_BEAM)) {
+        Actor_Kill(shot);
+    }
+}
+
+static void EnMThunder_SwordShotInit(EnMThunder* this, PlayState* play) {
+    SwordShotInfo* info;
+    f32 speed;
+
+    this->shotKind = this->actor.params - ENMTHUNDER_SWORD_SHOT_PARAMS(0);
+    info = &sSwordShotInfo[this->shotKind];
+    speed = info->speed;
+
+    Collider_InitCylinder(play, &this->collider);
+    Collider_SetCylinder(play, &this->collider, &this->actor, &sSwordShotCylinderInit);
+    this->collider.elem.atDmgInfo.dmgFlags = info->dmgFlags;
+    this->collider.elem.atDmgInfo.damage = info->damage;
+    this->collider.dim.radius = info->radius;
+    this->collider.dim.height = info->height;
+    this->collider.dim.yShift = -info->height / 2;
+
+    Lights_PointNoGlowSetInfo(&this->lightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
+                              this->actor.world.pos.z, info->prim.r, info->prim.g, info->prim.b, 180);
+    this->lightNode = LightContext_InsertLight(play, &play->lightCtx, &this->lightInfo);
+
+    this->actor.velocity.x = Math_CosS(this->actor.world.rot.x) * Math_SinS(this->actor.world.rot.y) * speed;
+    this->actor.velocity.y = -Math_SinS(this->actor.world.rot.x) * speed;
+    this->actor.velocity.z = Math_CosS(this->actor.world.rot.x) * Math_CosS(this->actor.world.rot.y) * speed;
+
+    // The sword beam and spin attack models face backwards, like the vanilla ones
+    this->actor.shape.rot.y = this->actor.world.rot.y + 0x8000;
+    this->actor.shape.rot.x = -this->actor.world.rot.x;
+    this->actor.shape.rot.z = 0;
+    this->actor.room = -1;
+    this->actor.flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED;
+    this->shotTimer = info->life;
+    this->shotCooldown = 0;
+    this->shotSpin = 0;
+    this->isCharging = false;
+    this->alphaFrac = 1.0f;
+    this->lightColorFrac = 1.0f;
+    // Counts as a sword beam for other code (Fierce Deity Anywhere keeps sword beams from hitting non-enemies)
+    this->subtype = ((this->shotKind == ENMTHUNDER_SHOT_DEITY) || (this->shotKind == ENMTHUNDER_SHOT_DEITY_BURST))
+                        ? ENMTHUNDER_SUBTYPE_SWORDBEAM_GREAT
+                        : ENMTHUNDER_SUBTYPE_SPIN_GREAT;
+
+    if (this->shotKind == ENMTHUNDER_SHOT_DEITY_BURST) {
+        Actor_SetScale(&this->actor, 0.1f);
+        Actor_PlaySfx(&this->actor, NA_SE_IT_ROLLING_CUT_LV2);
+        Rumble_Request(0.0f, 180, 10, 100);
+    } else {
+        Actor_SetScale(&this->actor, info->scale);
+        Actor_PlaySfx(&this->actor,
+                      (this->shotKind == ENMTHUNDER_SHOT_GILDED) ? NA_SE_IT_ROLLING_CUT_LV1 : NA_SE_IT_ROLLING_CUT_LV2);
+    }
+}
+
+// impact: hit something (a spark), rather than running out of range (just vanishes). The deity orb always bursts.
+static void EnMThunder_SwordShotEnd(EnMThunder* this, PlayState* play, s32 impact) {
+    if (this->shotKind == ENMTHUNDER_SHOT_DEITY) {
+        EnMThunder_SpawnSwordShot(play, ENMTHUNDER_SHOT_DEITY_BURST, &this->actor.world.pos, 0, 0);
+    } else if (impact && (this->shotKind != ENMTHUNDER_SHOT_DEITY_BURST)) {
+        EffectSsHitmark_SpawnFixedScale(play, 0, &this->actor.world.pos);
+    }
+    Actor_Kill(&this->actor);
+}
+
+static void EnMThunder_SwordShotUpdate(EnMThunder* this, PlayState* play) {
+    static Vec3f sZeroVec = { 0.0f, 0.0f, 0.0f };
+    SwordShotInfo* info = &sSwordShotInfo[this->shotKind];
+    Color_RGBA8 prim = { 255, 255, 255, 255 };
+    Color_RGBA8 env = { info->env.r, info->env.g, info->env.b, 0 };
+    Vec3f sparklePos;
+    s32 registerAT = true;
+
+    if (Play_InCsMode(play)) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
+    if (this->shotTimer <= 0) {
+        EnMThunder_SwordShotEnd(this, play, false);
+        return;
+    }
+    this->shotTimer--;
+
+    if (this->shotKind == ENMTHUNDER_SHOT_DEITY_BURST) {
+        // Grows fast, then fades. Only hurts while it grows, so each enemy is hit once.
+        Math_SmoothStepToF(&this->actor.scale.x, info->scale, 0.5f, 0.6f, 0.0f);
+        Actor_SetScale(&this->actor, this->actor.scale.x);
+        this->collider.dim.radius = this->actor.scale.x * 30.0f;
+        this->alphaFrac = CLAMP_MAX(this->shotTimer / 8.0f, 1.0f);
+        this->lightColorFrac = this->alphaFrac;
+        registerAT = this->shotTimer >= (info->life - 6);
+        this->shotSpin += 0x800;
+    } else {
+        // Anything the projectile touched last frame (an enemy, a shield, a switch)
+        if (this->collider.base.atFlags & (AT_HIT | AT_BOUNCED)) {
+            this->collider.base.atFlags &= ~(AT_HIT | AT_BOUNCED);
+            if (this->shotKind != ENMTHUNDER_SHOT_GREAT_FAIRY) {
+                EnMThunder_SwordShotEnd(this, play, true);
+                return;
+            }
+            // The ring cuts through: stop hurting for a few frames so each enemy is hit once
+            this->shotCooldown = 6;
+        }
+
+        Actor_UpdatePos(&this->actor);
+        // The ring only stops at the floor when it was aimed downwards, so that it skims over uneven ground
+        Actor_UpdateBgCheckInfo(play, &this->actor, 15.0f, 15.0f, 15.0f,
+                                ((this->shotKind == ENMTHUNDER_SHOT_GREAT_FAIRY) && (this->actor.world.rot.x < 0x200))
+                                    ? (UPDBGCHECKINFO_FLAG_1 | UPDBGCHECKINFO_FLAG_2)
+                                    : (UPDBGCHECKINFO_FLAG_1 | UPDBGCHECKINFO_FLAG_2 | UPDBGCHECKINFO_FLAG_4));
+        if (this->actor.bgCheckFlags & (BGCHECKFLAG_GROUND | BGCHECKFLAG_WALL | BGCHECKFLAG_CEILING)) {
+            EnMThunder_SwordShotEnd(this, play, true);
+            return;
+        }
+
+        if (this->shotTimer < 6) {
+            this->alphaFrac = this->shotTimer / 6.0f;
+        }
+        if (this->shotCooldown > 0) {
+            this->shotCooldown--;
+            registerAT = false;
+        }
+        this->shotSpin += (this->shotKind == ENMTHUNDER_SHOT_DEITY) ? 0x1800 : 0x1000;
+
+        sparklePos.x = this->actor.world.pos.x + Rand_CenteredFloat(info->radius);
+        sparklePos.y = this->actor.world.pos.y + Rand_CenteredFloat(20.0f);
+        sparklePos.z = this->actor.world.pos.z + Rand_CenteredFloat(info->radius);
+        EffectSsKirakira_SpawnSmall(play, &sparklePos, &sZeroVec, &sZeroVec, &prim, &env);
+    }
+
+    this->scroll += 1.0f;
+
+    Collider_UpdateCylinder(&this->actor, &this->collider);
+    if (this->shotKind == ENMTHUNDER_SHOT_GILDED) {
+        // The sword beam model sits ahead of the actor, like the vanilla beam's collider
+        this->collider.dim.pos.x += Math_SinS(this->actor.world.rot.y) * 5.0f * this->actor.scale.x;
+        this->collider.dim.pos.z += Math_CosS(this->actor.world.rot.y) * 5.0f * this->actor.scale.x;
+    }
+    if (registerAT) {
+        CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider.base);
+    }
+
+    Lights_PointNoGlowSetInfo(&this->lightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
+                              this->actor.world.pos.z, info->prim.r * this->lightColorFrac,
+                              info->prim.g * this->lightColorFrac, info->prim.b * this->lightColorFrac,
+                              (this->shotKind == ENMTHUNDER_SHOT_DEITY_BURST) ? 400 : 180);
+}
+
+static void EnMThunder_SwordShotDraw(EnMThunder* this, PlayState* play) {
+    SwordShotInfo* info = &sSwordShotInfo[this->shotKind];
+    u8 alpha = (u8)(this->alphaFrac * 255.0f);
+
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Gfx_SetupDL25_Xlu(play->state.gfxCtx);
+
+    switch (this->shotKind) {
+        case ENMTHUNDER_SHOT_GILDED:
+            // The vanilla sword beam model, smaller and golden (the actor matrix is already set up)
+            Matrix_Scale(0.02f, 0.02f, 0.02f, MTXMODE_APPLY);
+            MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+            gSPSegment(POLY_XLU_DISP++, 0x08,
+                       Gfx_TwoTexScrollEx(play->state.gfxCtx, 0, 0, 0, 16, 64, 1, 0,
+                                          0x1FF - ((u16)(s32)(this->scroll * 10.0f) & 0x1FF), 32, 128, 0, 0, 0, -10));
+            gDPSetPrimColor(POLY_XLU_DISP++, 0, 0x80, info->prim.r, info->prim.g, info->prim.b, alpha);
+            gDPSetEnvColor(POLY_XLU_DISP++, info->env.r, info->env.g, info->env.b, 128);
+            gSPDisplayList(POLY_XLU_DISP++, gSwordBeamDL);
+            break;
+
+        case ENMTHUNDER_SHOT_GREAT_FAIRY:
+        case ENMTHUNDER_SHOT_DEITY_BURST:
+            // A spin attack wave flying on its own (Great Fairy) / a great spin wave bursting out (Fierce Deity)
+            Matrix_RotateYS(this->shotSpin, MTXMODE_APPLY);
+            Matrix_Scale(0.02f, 0.02f, 0.02f, MTXMODE_APPLY);
+            MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+            gSPSegment(POLY_XLU_DISP++, 0x08,
+                       Gfx_TwoTexScrollEx(play->state.gfxCtx, 0, 0xFF - ((u16)(s32)(this->scroll * 30.0f) & 0xFF), 0,
+                                          64, 32, 1, 0xFF - ((u16)(s32)(this->scroll * 20.0f) & 0xFF), 0, 8, 8, -30, 0,
+                                          -20, 0));
+            gDPSetPrimColor(POLY_XLU_DISP++, 0, 0x80, info->prim.r, info->prim.g, info->prim.b, alpha);
+            gDPSetEnvColor(POLY_XLU_DISP++, info->env.r, info->env.g, info->env.b, 128);
+            if (this->shotKind == ENMTHUNDER_SHOT_GREAT_FAIRY) {
+                gSPDisplayList(POLY_XLU_DISP++, gSpinAttackDiskDL);
+            } else {
+                gSPDisplayList(POLY_XLU_DISP++, gGreatSpinAttackDiskDL);
+                gSPDisplayList(POLY_XLU_DISP++, gGreatSpinAttackCylinderDL);
+            }
+            break;
+
+        case ENMTHUNDER_SHOT_DEITY:
+            // A big spinning orb of light
+            gDPPipeSync(POLY_XLU_DISP++);
+            gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, info->prim.r, info->prim.g, info->prim.b, alpha);
+            gDPSetEnvColor(POLY_XLU_DISP++, info->env.r, info->env.g, info->env.b, 128);
+            Matrix_Translate(this->actor.world.pos.x, this->actor.world.pos.y, this->actor.world.pos.z, MTXMODE_NEW);
+            Matrix_Scale(info->scale, info->scale, 0.0f, MTXMODE_APPLY);
+            Matrix_ReplaceRotation(&play->billboardMtxF);
+            Matrix_RotateZS(this->shotSpin, MTXMODE_APPLY);
+            MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+            gSPDisplayList(POLY_XLU_DISP++, gLightOrbMaterial1DL);
+            gSPDisplayList(POLY_XLU_DISP++, gLightOrbModelDL);
+            // with a smaller white core spinning the other way
+            gDPPipeSync(POLY_XLU_DISP++);
+            gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, 255, 255, 255, alpha);
+            Matrix_Translate(this->actor.world.pos.x, this->actor.world.pos.y, this->actor.world.pos.z, MTXMODE_NEW);
+            Matrix_Scale(info->scale * 0.55f, info->scale * 0.55f, 0.0f, MTXMODE_APPLY);
+            Matrix_ReplaceRotation(&play->billboardMtxF);
+            Matrix_RotateZS(-this->shotSpin * 2, MTXMODE_APPLY);
+            MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
+            gSPDisplayList(POLY_XLU_DISP++, gLightOrbModelDL);
+            break;
+
+        default:
+            break;
+    }
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 void EnMThunder_Init(Actor* thisx, PlayState* play) {
     s32 pad;
     EnMThunder* this = (EnMThunder*)thisx;
     Player* player = GET_PLAYER(play);
+
+    if (ENMTHUNDER_IS_SWORD_SHOT(&this->actor)) {
+        EnMThunder_SwordShotInit(this, play);
+        return;
+    }
 
     Collider_InitCylinder(play, &this->collider);
     Collider_SetCylinder(play, &this->collider, &this->actor, &sCylinderInit);
@@ -194,6 +564,12 @@ void EnMThunder_Init(Actor* thisx, PlayState* play) {
 
 void EnMThunder_Destroy(Actor* thisx, PlayState* play) {
     EnMThunder* this = (EnMThunder*)thisx;
+
+    if (ENMTHUNDER_IS_SWORD_SHOT(&this->actor)) {
+        Collider_DestroyCylinder(play, &this->collider);
+        LightContext_RemoveLight(play, &play->lightCtx, this->lightNode);
+        return;
+    }
 
     if (this->isCharging) {
         Magic_Reset(play);
@@ -464,6 +840,11 @@ void EnMThunder_UnkType_Attack(EnMThunder* this, PlayState* play) {
 void EnMThunder_Update(Actor* thisx, PlayState* play) {
     EnMThunder* this = (EnMThunder*)thisx;
 
+    if (ENMTHUNDER_IS_SWORD_SHOT(&this->actor)) {
+        EnMThunder_SwordShotUpdate(this, play);
+        return;
+    }
+
     this->actionFunc(this, play);
     EnMThunder_AdjustLights(play, this->adjustLightsArg1);
     Lights_PointNoGlowSetInfo(&this->lightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
@@ -486,6 +867,11 @@ void EnMThunder_Draw(Actor* thisx, PlayState* play2) {
     Player* player = GET_PLAYER(play);
     f32 scale;
     s32 y2Scroll;
+
+    if (ENMTHUNDER_IS_SWORD_SHOT(&this->actor)) {
+        EnMThunder_SwordShotDraw(this, play);
+        return;
+    }
 
     OPEN_DISPS(play->state.gfxCtx);
 

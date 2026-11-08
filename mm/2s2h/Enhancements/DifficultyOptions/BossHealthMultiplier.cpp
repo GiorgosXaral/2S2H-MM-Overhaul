@@ -9,7 +9,10 @@ extern "C" {
 }
 
 #define CVAR_NAME "gEnhancements.DifficultyOptions.BossHealthMultiplier"
-#define CVAR CVarGetInteger(CVAR_NAME, 0)
+// Boss Overhaul sets boss health itself (up to 120 for Majora's Wrath); multiplying on top of that would overflow the
+// signed 8-bit health, so this multiplier stands aside while Boss Overhaul's HP option is on.
+#define CVAR_NAME_BOSS_OVERHAUL_HP "gEnhancements.BossOverhaul.BossHP"
+#define CVAR ((CVarGetInteger(CVAR_NAME_BOSS_OVERHAUL_HP, 1) == 0) ? CVarGetInteger(CVAR_NAME, 0) : 0)
 
 static std::unordered_map<Actor*, int> sLastBossHealth;
 
@@ -63,4 +66,4 @@ void RegisterBossHealthMultiplier() {
     COND_ID_HOOK(OnActorDestroy, ACTOR_BOSS_07, true, ClearBossHealthMultiplier);
 }
 
-static RegisterShipInitFunc initFunc(RegisterBossHealthMultiplier, { CVAR_NAME });
+static RegisterShipInitFunc initFunc(RegisterBossHealthMultiplier, { CVAR_NAME, CVAR_NAME_BOSS_OVERHAUL_HP });

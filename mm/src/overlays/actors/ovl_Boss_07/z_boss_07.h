@@ -295,6 +295,11 @@ typedef struct Boss07 {
     /* 0xAC10 */ UNK_TYPE1 unkAC10[4];
     /* 0xAC14 */ f32 subCamEyeModY;
     /* 0xAC18 */ UNK_TYPE1 unkAC18[8];
-} Boss07; // size = 0xAC20
+    // Boss Overhaul
+    s16 boVolleyTimer;
+    s16 boSpiralAngle;
+    u8 boVolleyPattern;
+    u8 boSummonWave;
+} Boss07; // size = 0xAC20 (vanilla)
 
 #endif // Z_BOSS_07_H

@@ -25,6 +25,7 @@
 #include "overlays/actors/ovl_En_Fish/z_en_fish.h"
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "overlays/actors/ovl_En_Ishi/z_en_ishi.h"
+#include "overlays/actors/ovl_En_M_Thunder/z_en_m_thunder.h"
 #include "overlays/actors/ovl_En_Mushi2/z_en_mushi2.h"
 #include "overlays/actors/ovl_En_Ot/z_en_ot.h"
 #include "overlays/actors/ovl_En_Test3/z_en_test3.h"
@@ -3691,6 +3692,11 @@ void func_8082FA5C(PlayState* play, Player* this, PlayerMeleeWeaponState meleeWe
         }
 
         Player_OverrideBlureColors(play, this, 0, 4);
+
+        // Sword projectiles: fire as the swing starts (checks the sword, health and the kind of swing itself)
+        if (meleeWeaponState != PLAYER_MELEE_WEAPON_STATE_0) {
+            EnMThunder_TrySwordShot(play, this);
+        }
     }
 
     this->meleeWeaponState = meleeWeaponState;
@@ -14108,8 +14114,10 @@ s32 Player_ActionHandler_7(Player* this, PlayState* play) {
             PlayerMeleeWeaponAnimation meleeWeaponAnim = func_808335F4(this);
 
             func_80833864(play, this, meleeWeaponAnim);
+            // Sword projectiles replace the Fierce Deity's vanilla beam with the deity orb
             if ((meleeWeaponAnim >= PLAYER_MWA_SPIN_ATTACK_1H) ||
-                ((this->transformation == PLAYER_FORM_FIERCE_DEITY) && Player_IsZTargeting(this))) {
+                ((this->transformation == PLAYER_FORM_FIERCE_DEITY) && Player_IsZTargeting(this) &&
+                 !EnMThunder_DeityShotReplacesBeam())) {
                 this->stateFlags2 |= PLAYER_STATE2_20000;
                 func_808332A0(play, this, 0, meleeWeaponAnim < PLAYER_MWA_SPIN_ATTACK_1H);
             }
