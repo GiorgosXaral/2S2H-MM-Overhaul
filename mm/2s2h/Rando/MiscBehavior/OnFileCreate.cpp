@@ -46,11 +46,9 @@ void Rando::MiscBehavior::OnFileCreate(s16 fileNum) {
         try {
             // SpoilerFileIndex == 0 means we're generating a new one
             if (CVarGetInteger("gRando.SpoilerFileIndex", 0) == 0) {
-                bool hadInputSeed = true;
                 std::string inputSeed = Ship_RemoveSpecialCharacters(CVarGetString("gRando.InputSeed", ""));
                 if (inputSeed.empty()) {
                     inputSeed = std::to_string(Ship_Random(0, 1000000));
-                    hadInputSeed = false;
                 }
 
                 SPDLOG_INFO("Generating new randomizer with seed: {}", inputSeed);
@@ -74,6 +72,11 @@ void Rando::MiscBehavior::OnFileCreate(s16 fileNum) {
                     RANDO_SAVE_OPTIONS[RO_STRAY_FAIRIES_REQUIRED] = STRAY_FAIRY_SCATTERED_TOTAL;
                 }
 
+                // Vanilla Stray Fairies never enter the item pool, so every dungeon keeps its full set
+                if (RANDO_SAVE_OPTIONS[RO_PLACEMENT_STRAY_FAIRIES] == RO_DUNGEON_ITEM_VANILLA) {
+                    RANDO_SAVE_OPTIONS[RO_STRAY_FAIRIES_MAX] = STRAY_FAIRY_SCATTERED_TOTAL;
+                }
+
                 // Persist StartingItems to the save
                 auto startingItems = Rando::GetStartingItemsFromConfig();
                 Rando::SetStartingItemsInSave(gSaveContext.save.shipSaveInfo.rando, startingItems);
@@ -81,6 +84,10 @@ void Rando::MiscBehavior::OnFileCreate(s16 fileNum) {
                 // Persist SariaPriorityItems to the save
                 auto priorityItems = Rando::GetSariaPriorityItemsFromConfig();
                 Rando::SetSariaPriorityItemsInSave(gSaveContext.save.shipSaveInfo.rando, priorityItems);
+
+                // Persist AdditionalItems to the save
+                auto additionalItems = Rando::GetAdditionalItemsFromConfig();
+                Rando::SetAdditionalItemsInSave(gSaveContext.save.shipSaveInfo.rando, additionalItems);
 
                 std::vector<RandoCheckId> checkPool;
                 std::vector<RandoItemId> itemPool;
@@ -196,9 +203,6 @@ void Rando::MiscBehavior::OnFileCreate(s16 fileNum) {
                     std::string fileName = inputSeed + ".json";
                     Rando::Spoiler::SaveToFile(fileName, spoiler);
 
-                    if (hadInputSeed) {
-                        CVarSetString("gRando.SpoilerFile", fileName.c_str());
-                    }
                     Rando::Spoiler::RefreshOptions();
                 }
 

@@ -191,8 +191,8 @@ s32 EnBigokuta_IsInWater(EnBigokuta* this, PlayState* play) {
 
     this->picto.actor.floorHeight = BgCheck_EntityRaycastFloor5(&play->colCtx, &this->picto.actor.floorPoly, &bgId,
                                                                 &this->picto.actor, &this->picto.actor.world.pos);
-    if (!WaterBox_GetSurface1_2(play, &play->colCtx, this->picto.actor.world.pos.x, this->picto.actor.world.pos.z,
-                                &this->picto.actor.home.pos.y, &waterBox) ||
+    if (!BgCheck_GetWaterSurfaceNoBgId(play, &play->colCtx, this->picto.actor.world.pos.x,
+                                       this->picto.actor.world.pos.z, &this->picto.actor.home.pos.y, &waterBox) ||
         (this->picto.actor.home.pos.y <= this->picto.actor.floorHeight)) {
         return false;
     } else {
@@ -280,7 +280,7 @@ void EnBigokuta_EoAttacks(EnBigokuta* this, PlayState* play) {
 
             pos.x = this->picto.actor.world.pos.x + (Math_SinS(yaw) * 260.0f);
             pos.z = this->picto.actor.world.pos.z + (Math_CosS(yaw) * 260.0f);
-            if (WaterBox_GetSurface1_2(play, &play->colCtx, pos.x, pos.z, &surfaceY, &waterBox)) {
+            if (BgCheck_GetWaterSurfaceNoBgId(play, &play->colCtx, pos.x, pos.z, &surfaceY, &waterBox)) {
                 pos.y = surfaceY;
                 EoSummon_Spawn(play, &this->picto.actor, ACTOR_EN_OKUTA, &pos, yaw, EN_OKUTA_TYPE_RED_OCTOROK);
             }

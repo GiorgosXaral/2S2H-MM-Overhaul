@@ -20,6 +20,7 @@ DEFINE_HOOK(OnGameCompletion, ())
 DEFINE_HOOK(OnSceneInit, (s8 sceneId, s8 spawnNum))
 DEFINE_HOOK(OnRoomInit, (s8 sceneId, s8 roomNum))
 DEFINE_HOOK(AfterRoomSceneCommands, (s8 sceneId, s8 roomNum))
+DEFINE_HOOK(OnPlayDrawWorldStart, ())
 DEFINE_HOOK(OnPlayDrawWorldEnd, ())
 DEFINE_HOOK(OnPlayDestroy, ())
 
@@ -37,6 +38,7 @@ DEFINE_HOOK(OnPlayerShieldControl, (Player * player, PlayState* play, f32* xInpu
 DEFINE_HOOK(OnPlayerTelescopeAim, (s16 * inputX, s16* inputY))
 DEFINE_HOOK(OnPlayerDekuCharge, (Player * player))
 DEFINE_HOOK(OnBossDefeated, (s16 actorId))
+DEFINE_HOOK(OnActorEntryHalfDaysBits, (ActorEntry * actorEntry, s32* halfDaysBits))
 
 DEFINE_HOOK(OnSceneFlagSet, (s16 sceneId, FlagType flagType, u32 flag))
 DEFINE_HOOK(OnSceneFlagUnset, (s16 sceneId, FlagType flagType, u32 flag))

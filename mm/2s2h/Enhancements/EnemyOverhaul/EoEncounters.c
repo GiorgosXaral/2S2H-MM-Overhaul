@@ -270,7 +270,7 @@ static s32 EoCompanion_FindSpot(PlayState* play, Actor* anchor, u8 placement, s1
             f32 surfaceY;
             WaterBox* waterBox;
 
-            if (!WaterBox_GetSurface1(play, &play->colCtx, spot.x, spot.z, &surfaceY, &waterBox) ||
+            if (!BgCheck_GetWaterSurfaceNoBgIdAlt(play, &play->colCtx, spot.x, spot.z, &surfaceY, &waterBox) ||
                 (fabsf(surfaceY - anchor->world.pos.y) > 40.0f)) {
                 continue;
             }
@@ -289,7 +289,7 @@ static s32 EoCompanion_FindSpot(PlayState* play, Actor* anchor, u8 placement, s1
                 f32 surfaceY;
                 WaterBox* waterBox;
 
-                if (WaterBox_GetSurface1(play, &play->colCtx, spot.x, spot.z, &surfaceY, &waterBox) &&
+                if (BgCheck_GetWaterSurfaceNoBgIdAlt(play, &play->colCtx, spot.x, spot.z, &surfaceY, &waterBox) &&
                     (surfaceY > floorY + 10.0f)) {
                     continue;
                 }

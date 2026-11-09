@@ -31,6 +31,7 @@
 #include "2s2h/ObjectExtension/ObjectExtension.h"
 #include "2s2h/ObjectExtension/ActorListIndex.h"
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/BenGui/CosmeticEditor.h"
 
 // bss
 // FaultClient sActorFaultClient; // 2 funcs
@@ -607,13 +608,16 @@ void Attention_Draw(Attention* attention, PlayState* play) {
                         lockOnScaleX = ((reticle->radius - 120.0f) * 0.001f) + 0.15f;
                     }
 
+                    f32 reticleScale = CVarGetFloat(CVAR_COSMETIC("Silly.LockOnReticleScale"), 1.0f);
+                    f32 reticleSpin = CVarGetFloat(CVAR_COSMETIC("Silly.LockOnReticleSpin"), 1.0f);
+
                     Matrix_Translate(reticle->pos.x, reticle->pos.y, 0.0f, MTXMODE_NEW);
-                    Matrix_Scale(lockOnScaleX, 0.15f, 1.0f, MTXMODE_APPLY);
+                    Matrix_Scale(lockOnScaleX * reticleScale, 0.15f * reticleScale, 1.0f, MTXMODE_APPLY);
 
-                    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, reticle->color.r, reticle->color.g, reticle->color.b,
-                                    (u8)alpha);
+                    gDPSetPrimColorOverride(OVERLAY_DISP++, 0, 0, reticle->color.r, reticle->color.g, reticle->color.b,
+                                            (u8)alpha, COSMETIC_ID("HUD.TargetReticle"));
 
-                    Matrix_RotateZS(attention->reticleSpinCounter * 0x200, MTXMODE_APPLY);
+                    Matrix_RotateZS((s16)(attention->reticleSpinCounter * 0x200 * reticleSpin), MTXMODE_APPLY);
 
                     // Draw the 4 triangles that make up the reticle
                     for (triangleIndex = 0; triangleIndex < 4; triangleIndex++) {
@@ -649,8 +653,8 @@ void Attention_Draw(Attention* attention, PlayState* play) {
         Matrix_RotateYS(play->gameplayFrames * 0xBB8, MTXMODE_APPLY);
         Matrix_Scale((iREG(27) + 35) / 1000.0f, (iREG(28) + 60) / 1000.0f, (iREG(29) + 50) / 1000.0f, MTXMODE_APPLY);
         if (GameInteractor_Should(VB_DRAW_LOCK_ON_ARROW, true, actor)) {
-            gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, attentionColor->primary.r, attentionColor->primary.g,
-                            attentionColor->primary.b, 255);
+            gDPSetPrimColorOverride(POLY_XLU_DISP++, 0, 0, attentionColor->primary.r, attentionColor->primary.g,
+                                    attentionColor->primary.b, 255, COSMETIC_ID("HUD.TargetArrow"));
         }
         MATRIX_FINALIZE_AND_LOAD(POLY_XLU_DISP++, play->state.gfxCtx);
         gSPDisplayList(POLY_XLU_DISP++, gLockOnArrowDL);
@@ -1858,7 +1862,8 @@ void Actor_UpdateBgCheckInfo(PlayState* play, Actor* actor, f32 wallCheckHeight,
         func_800B7678(play, actor, &pos, updBgCheckInfoFlags);
         y = actor->world.pos.y;
 
-        if (WaterBox_GetSurface1(play, &play->colCtx, actor->world.pos.x, actor->world.pos.z, &y, &waterbox)) {
+        if (BgCheck_GetWaterSurfaceNoBgIdAlt(play, &play->colCtx, actor->world.pos.x, actor->world.pos.z, &y,
+                                             &waterbox)) {
             actor->depthInWater = y - actor->world.pos.y;
             if (actor->depthInWater <= 0.0f) {
                 actor->bgCheckFlags &= ~(BGCHECKFLAG_WATER | BGCHECKFLAG_WATER_TOUCH);
@@ -1888,7 +1893,8 @@ void Actor_UpdateBgCheckInfo(PlayState* play, Actor* actor, f32 wallCheckHeight,
         WaterBox* waterbox;
         f32 y = actor->world.pos.y;
 
-        if (WaterBox_GetSurface1(play, &play->colCtx, actor->world.pos.x, actor->world.pos.z, &y, &waterbox)) {
+        if (BgCheck_GetWaterSurfaceNoBgIdAlt(play, &play->colCtx, actor->world.pos.x, actor->world.pos.z, &y,
+                                             &waterbox)) {
             actor->depthInWater = y - actor->world.pos.y;
 
             if (actor->depthInWater < 0.0f) {
@@ -2668,6 +2674,8 @@ void Actor_SpawnSetupActors(PlayState* play, ActorContext* actorCtx) {
             currentActorListIndex = i;
 
             actorEntryHalfDayBit = ((actorEntry->rot.x & 7) << 7) | (actorEntry->rot.z & 0x7F);
+            // 2S2H [Enhancement] Let hooks override the half-days this entry exists in
+            GameInteractor_ExecuteOnActorEntryHalfDaysBits(actorEntry, &actorEntryHalfDayBit);
             if (actorEntryHalfDayBit == 0) {
                 actorEntryHalfDayBit = HALFDAYBIT_ALL;
             }
@@ -3176,7 +3184,7 @@ void Actor_DrawLensActors(PlayState* play, s32 numLensActors, Actor** lensActors
 
     gDPSetCombineLERP(gfx++, 1, TEXEL0, PRIMITIVE, 0, 1, TEXEL0, PRIMITIVE, 0, 1, TEXEL0, PRIMITIVE, 0, 1, TEXEL0,
                       PRIMITIVE, 0);
-    gDPSetPrimColor(gfx++, 0, 0, 74, 0, 0, 74);
+    gDPSetPrimColorOverride(gfx++, 0, 0, 74, 0, 0, 74, COSMETIC_ID("HUD.LensOverlay"));
 
     gfxTemp = gfx;
     Actor_DrawLensOverlay(&gfxTemp, play->actorCtx.lensMaskSize);
@@ -3867,6 +3875,10 @@ Actor* Actor_SpawnEntry(ActorContext* actorCtx, ActorEntry* actorEntry, PlayStat
     s16 rotY = (actorEntry->rot.y >> 7) & 0x1FF;
     s16 rotZ = (actorEntry->rot.z >> 7) & 0x1FF;
 
+    // 2S2H [Enhancement] Let hooks override the half-days this entry exists in
+    s32 halfDaysBits = ((actorEntry->rot.x & 7) << 7) | (actorEntry->rot.z & 0x7F);
+    GameInteractor_ExecuteOnActorEntryHalfDaysBits(actorEntry, &halfDaysBits);
+
     if (!(actorEntry->id & 0x8000)) {
         rotY = DEG_TO_BINANG(rotY);
     } else if (rotY > 180) {
@@ -3887,8 +3899,7 @@ Actor* Actor_SpawnEntry(ActorContext* actorCtx, ActorEntry* actorEntry, PlayStat
 
     return Actor_SpawnAsChildAndCutscene(actorCtx, play, actorEntry->id & 0x1FFF, actorEntry->pos.x, actorEntry->pos.y,
                                          actorEntry->pos.z, rotX, rotY, rotZ, actorEntry->params & 0xFFFF,
-                                         actorEntry->rot.y & 0x7F,
-                                         ((actorEntry->rot.x & 7) << 7) | (actorEntry->rot.z & 0x7F), NULL);
+                                         actorEntry->rot.y & 0x7F, /* 2S2H (see above) */ halfDaysBits, NULL);
 }
 
 Actor* Actor_Delete(ActorContext* actorCtx, Actor* actor, PlayState* play) {
@@ -5014,16 +5025,25 @@ void Npc_TrackPoint(Actor* actor, NpcInteractInfo* interactInfo, s16 presetIndex
 }
 
 // #region 2S2H - These DisplayLists are now extracted
-// Gfx D_801AEF88[] = {
-//     gsDPSetRenderMode(AA_EN | Z_CMP | Z_UPD | IM_RD | CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL |
-//                           G_RM_FOG_SHADE_A,
-//                       AA_EN | Z_CMP | Z_UPD | IM_RD | CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL |
-//                           GBL_c2(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)),
+/**
+ * A display list setting up for translucent drawing when a fading actor is partially faded,
+ * overriding the opaque render mode from the calling display list.
+ * Typically this DL is assigned to a segment that is called by the display lists from the assets.
+ * @see gActorSetupOpaDL
+ */
+// Gfx gActorSetupXluDL[] = {
+//     gsDPSetRenderMode(G_RM_FOG_SHADE_A, G_RM_AA_ZB_XLU_SURF2 | Z_UPD),
 //     gsDPSetAlphaCompare(G_AC_THRESHOLD),
 //     gsSPEndDisplayList(),
 // };
-
-// Gfx D_801AEFA0[] = {
+//
+/**
+ * A no-op display list to use when a fading actor is fully opaque,
+ * retaining the opaque render mode from the calling display list.
+ * Typically this DL is assigned to a segment that is called by the display lists from the assets.
+ * @see gActorSetupXluDL
+ */
+// Gfx gActorSetupOpaDL[] = {
 //     gsSPEndDisplayList(),
 // };
 // #endregion

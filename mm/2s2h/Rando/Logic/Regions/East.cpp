@@ -247,6 +247,9 @@ static RegisterShipInitFunc initFunc([]() {
             CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_07, true),
             CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_08, true),
             CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_09, true),
+            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_10, true),
+            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_11, true),
+            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_12, true),
             CHECK(RC_ENEMY_DROP_STALCHILD, CanKillEnemy(ACTOR_EN_SKB) && IS_NIGHT()), // Night only
             CHECK(RC_ENEMY_DROP_BAD_BAT, CanKillEnemy(ACTOR_EN_BAT) && IS_DAY()), // Day only
         },
@@ -267,12 +270,7 @@ static RegisterShipInitFunc initFunc([]() {
     Regions[RR_IKANA_GRAVEYARD_UPPER] = RandoRegion{ .name = "Upper", .sceneId = SCENE_BOTI,
         .checks = {
             CHECK(RC_IKANA_GRAVEYARD_CAPTAIN_MASK, CanKillEnemy(ACTOR_EN_SKB) && CanKillEnemy(ACTOR_EN_BSB)),
-            // Rocks can be picked up and thrown at this:
-            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_10, true),
-            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_11, true),
-            CHECK(RC_IKANA_GRAVEYARD_WONDER_ITEM_12, true),
             CHECK(RC_ENEMY_DROP_STALCHILD, CanKillEnemy(ACTOR_EN_SKB)),
-            CHECK(RC_ENEMY_DROP_BAD_BAT, CanKillEnemy(ACTOR_EN_BAT) && IS_DAY()), // Day only
             CHECK(RC_ENEMY_DROP_CAPTAIN_KEETA, CanKillEnemy(ACTOR_EN_SKB) && CanKillEnemy(ACTOR_EN_BSB)),
         },
         .connections = {
@@ -362,17 +360,17 @@ static RegisterShipInitFunc initFunc([]() {
         .checks = {
             CHECK(RC_SAKON_HIDEOUT_FIRST_ROOM_POT_01,    true),
             CHECK(RC_SAKON_HIDEOUT_FIRST_ROOM_POT_02,    true),
-            CHECK(RC_SAKON_HIDEOUT_SECOND_ROOM_POT_01,   true),
-            CHECK(RC_SAKON_HIDEOUT_SECOND_ROOM_POT_02,   true),
-            CHECK(RC_SAKON_HIDEOUT_THIRD_ROOM_POT,       true),
+            CHECK(RC_SAKON_HIDEOUT_SECOND_ROOM_POT_01,   CanKillEnemy(ACTOR_EN_DEKUBABA)),
+            CHECK(RC_SAKON_HIDEOUT_SECOND_ROOM_POT_02,   CanKillEnemy(ACTOR_EN_DEKUBABA)),
+            CHECK(RC_SAKON_HIDEOUT_THIRD_ROOM_POT,       CanKillEnemy(ACTOR_EN_DEKUBABA)),
             CHECK(RC_ENEMY_DROP_DEKU_BABA,               CanKillEnemy(ACTOR_EN_DEKUBABA)),
-            CHECK(RC_ENEMY_DROP_WOLFOS,                  CanKillEnemy(ACTOR_EN_WF)),
+            CHECK(RC_ENEMY_DROP_WOLFOS,                  CanKillEnemy(ACTOR_EN_WF) && CanKillEnemy(ACTOR_EN_DEKUBABA)),
         },
         .exits = { //     TO                                         FROM
             EXIT(ENTRANCE(IKANA_CANYON, 6),                 ENTRANCE(SAKONS_HIDEOUT, 0), true),
         },
         .events = {
-            EVENT(RE_RETRIEVE_SUN_MASK, CanKillEnemy(ACTOR_EN_WF)),
+            EVENT(RE_RETRIEVE_SUN_MASK, CanKillEnemy(ACTOR_EN_WF) && CanKillEnemy(ACTOR_EN_DEKUBABA)),
         },
     };
     Regions[RR_SECRET_SHRINE_ENTRANCE] = RandoRegion{ .name = "Entrance", .sceneId = SCENE_RANDOM,

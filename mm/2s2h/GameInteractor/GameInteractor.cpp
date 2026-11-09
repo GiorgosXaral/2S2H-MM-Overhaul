@@ -108,6 +108,10 @@ void GameInteractor_ExecuteAfterRoomSceneCommands(s16 sceneId, s8 roomNum) {
     GameInteractor::Instance->ExecuteHooksForFilter<GameInteractor::AfterRoomSceneCommands>(sceneId, roomNum);
 }
 
+void GameInteractor_ExecuteOnPlayDrawWorldStart() {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnPlayDrawWorldStart>();
+}
+
 void GameInteractor_ExecuteOnPlayDrawWorldEnd() {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnPlayDrawWorldEnd>();
 }
@@ -209,6 +213,13 @@ void GameInteractor_ExecuteOnBossDefeated(s16 actorId) {
     GameInteractor::Instance->ExecuteHooksForID<GameInteractor::OnBossDefeated>(actorId, actorId);
     GameInteractor::Instance->ExecuteHooksForPtr<GameInteractor::OnBossDefeated>((uintptr_t)actorId, actorId);
     GameInteractor::Instance->ExecuteHooksForFilter<GameInteractor::OnBossDefeated>(actorId);
+}
+
+void GameInteractor_ExecuteOnActorEntryHalfDaysBits(ActorEntry* actorEntry, s32* halfDaysBits) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnActorEntryHalfDaysBits>(actorEntry, halfDaysBits);
+    GameInteractor::Instance->ExecuteHooksForID<GameInteractor::OnActorEntryHalfDaysBits>(actorEntry->id & 0x1FFF,
+                                                                                          actorEntry, halfDaysBits);
+    GameInteractor::Instance->ExecuteHooksForFilter<GameInteractor::OnActorEntryHalfDaysBits>(actorEntry, halfDaysBits);
 }
 
 void GameInteractor_ExecuteOnSceneFlagSet(s16 sceneId, FlagType flagType, u32 flag) {
@@ -338,11 +349,13 @@ int GameInteractor_InvertControl(GIInvertType type) {
             }
             break;
         case GI_INVERT_FIRST_PERSON_AIM_X:
+        case GI_INVERT_TELESCOPE_X:
             if (CVarGetInteger("gEnhancements.Camera.FirstPerson.InvertX", 0)) {
                 result *= -1;
             }
             break;
         case GI_INVERT_FIRST_PERSON_AIM_Y:
+        case GI_INVERT_TELESCOPE_Y:
             if (CVarGetInteger("gEnhancements.Camera.FirstPerson.InvertY", 1)) {
                 result *= -1;
             }
@@ -374,6 +387,11 @@ int GameInteractor_InvertControl(GIInvertType type) {
             break;
         case GI_INVERT_SHIELD_Y:
             if (CVarGetInteger("gEnhancements.Equipment.InvertShieldY", 0)) {
+                result *= -1;
+            }
+            break;
+        case GI_INVERT_ZORA_SWIM_Y:
+            if (CVarGetInteger("gEnhancements.Player.InvertZoraSwimY", 1)) {
                 result *= -1;
             }
             break;

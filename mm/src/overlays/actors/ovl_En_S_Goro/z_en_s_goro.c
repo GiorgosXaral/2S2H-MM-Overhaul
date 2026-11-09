@@ -36,6 +36,8 @@ Week Event Flags:
 #include "overlays/actors/ovl_En_Gk/z_en_gk.h" // Goron Elder's Son
 #include "overlays/actors/ovl_En_Jg/z_en_jg.h" // Goron Elder
 #include "objects/object_taisou/object_taisou.h"
+#include "2s2h/BenGui/CosmeticEditor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_FRIENDLY | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
@@ -680,7 +682,7 @@ u16 EnSGoro_BombshopGoron_NextTextId(EnSGoro* this, PlayState* play) {
                     Audio_PlaySfx(NA_SE_SY_ERROR);
                     return 0x673;
                 }
-                this->powderKegPrice = play->msgCtx.unk1206C;
+                this->powderKegPrice = play->msgCtx.firstChoicePrice;
                 if (gSaveContext.save.saveInfo.playerData.rupees < this->powderKegPrice) {
                     this->actionFlags |= EN_S_GORO_ACTIONFLAG_LASTMESSAGE;
                     this->actionFlags |= EN_S_GORO_ACTIONFLAG_TIRED;
@@ -1386,6 +1388,7 @@ void EnSGoro_TransformLimbDraw(PlayState* play, s32 limbIndex, Actor* thisx) {
                 Matrix_RotateYS(this->headRotate.y, MTXMODE_APPLY);
                 Matrix_RotateXS(this->headRotate.x, MTXMODE_APPLY);
                 Matrix_RotateZS(this->headRotate.z, MTXMODE_APPLY);
+                Matrix_Translate(CVarGetFloat(CVAR_COSMETIC("Silly.GoronNeckLength"), 0.0f), 0.0f, 0.0f, MTXMODE_APPLY);
                 Matrix_Push();
             }
             break;

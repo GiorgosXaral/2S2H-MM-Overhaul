@@ -44,8 +44,10 @@ typedef enum {
     GI_INVERT_SHOP_X,
     GI_INVERT_HORSE_X,
     GI_INVERT_ZORA_SWIM_X,
+    GI_INVERT_ZORA_SWIM_Y,
     GI_INVERT_DEBUG_DPAD_X,
     GI_INVERT_TELESCOPE_X,
+    GI_INVERT_TELESCOPE_Y,
     GI_INVERT_FIRST_PERSON_AIM_X,
     GI_INVERT_FIRST_PERSON_AIM_Y,
     GI_INVERT_FIRST_PERSON_GYRO_X,
@@ -510,6 +512,7 @@ void GameInteractor_ExecuteOnGameCompletion();
 void GameInteractor_ExecuteOnSceneInit(s16 sceneId, s8 spawnNum);
 void GameInteractor_ExecuteOnRoomInit(s16 sceneId, s8 roomNum);
 void GameInteractor_ExecuteAfterRoomSceneCommands(s16 sceneId, s8 roomNum);
+void GameInteractor_ExecuteOnPlayDrawWorldStart();
 void GameInteractor_ExecuteOnPlayDrawWorldEnd();
 void GameInteractor_ExecuteOnPlayDestroy();
 
@@ -528,6 +531,7 @@ void GameInteractor_ExecuteOnPlayerShieldControl(Player* player, PlayState* play
 void GameInteractor_ExecuteOnPlayerTelescopeAim(s16* inputX, s16* inputY);
 void GameInteractor_ExecuteOnPlayerDekuCharge(Player* player);
 void GameInteractor_ExecuteOnBossDefeated(s16 actorId);
+void GameInteractor_ExecuteOnActorEntryHalfDaysBits(ActorEntry* actorEntry, s32* halfDaysBits);
 
 void GameInteractor_ExecuteOnSceneFlagSet(s16 sceneId, FlagType flagType, u32 flag);
 void GameInteractor_ExecuteOnSceneFlagUnset(s16 sceneId, FlagType flagType, u32 flag);

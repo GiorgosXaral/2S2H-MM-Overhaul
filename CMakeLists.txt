@@ -5,14 +5,14 @@ set(CMAKE_CXX_STANDARD 20 CACHE STRING "The C++ standard to use")
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
 set(GAME_STR "MM")
-project(2s2h VERSION 5.0.0 LANGUAGES C CXX)
+project(2s2h VERSION 5.1.0 LANGUAGES C CXX)
 include(CMake/2ship-cvars.cmake)
 include(CMake/lus-cvars.cmake)
 set(SPDLOG_LEVEL_TRACE 0)
 set(SPDLOG_LEVEL_OFF 6)
 set(SPDLOG_MIN_CUTOFF SPDLOG_LEVEL_TRACE CACHE STRING "cutoff at trace")
-set(PROJECT_BUILD_NAME "Battler Alfa" CACHE STRING "" FORCE)
-set(PROJECT_TEAM "github.com/harbourmasters" CACHE STRING "" FORCE)
+set(PROJECT_BUILD_NAME "Beatrice Alfa" CACHE STRING "" FORCE)
+set(PROJECT_TEAM "github.com/2ship2harkinian" CACHE STRING "" FORCE)
 
 execute_process(
     COMMAND git branch --show-current
@@ -20,6 +20,17 @@ execute_process(
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+
+# Github Actions checks out a detached HEAD, so check environment for the branch name instead
+if(NOT GIT_BRANCH)
+    if(DEFINED ENV{GITHUB_HEAD_REF} AND NOT "$ENV{GITHUB_HEAD_REF}" STREQUAL "")
+        set(GIT_BRANCH "$ENV{GITHUB_HEAD_REF}")
+    elseif(DEFINED ENV{GITHUB_REF_NAME} AND NOT "$ENV{GITHUB_REF_NAME}" STREQUAL "")
+        set(GIT_BRANCH "$ENV{GITHUB_REF_NAME}")
+    else()
+        set(GIT_BRANCH "detached")
+    endif()
+endif()
 
 set(CMAKE_PROJECT_GIT_BRANCH "${GIT_BRANCH}" CACHE STRING "Git branch" FORCE)
 
@@ -29,6 +40,15 @@ execute_process(
     OUTPUT_VARIABLE GIT_COMMIT_HASH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+
+# CI builds a PR from an ephemeral merge commit, so report the head commit GitHub shows instead
+if(DEFINED ENV{GITHUB_EVENT_PATH} AND EXISTS "$ENV{GITHUB_EVENT_PATH}")
+    file(READ "$ENV{GITHUB_EVENT_PATH}" GITHUB_EVENT_JSON)
+    string(JSON PR_HEAD_SHA ERROR_VARIABLE PR_HEAD_SHA_ERROR GET "${GITHUB_EVENT_JSON}" "pull_request" "head" "sha")
+    if(PR_HEAD_SHA AND PR_HEAD_SHA_ERROR STREQUAL "NOTFOUND")
+        set(GIT_COMMIT_HASH "${PR_HEAD_SHA}")
+    endif()
+endif()
 
 # Get only the first 7 characters of the hash
 string(SUBSTRING "${GIT_COMMIT_HASH}" 0 7 SHORT_COMMIT_HASH)
@@ -186,6 +206,28 @@ endif()
 
 add_subdirectory(ZAPDTR/ZAPD ${CMAKE_BINARY_DIR}/ZAPD)
 add_subdirectory(OTRExporter)
+
+function(ship_quiet_vendored_warnings target)
+    if (NOT TARGET ${target})
+        message(STATUS "ship_quiet_vendored_warnings: no target '${target}', skipping")
+        return()
+    endif()
+    set(_common -Wno-missing-braces -Wno-deprecated-declarations -Wno-sign-compare -Wno-unused-result)
+    set(_clang_only -Wno-mismatched-tags -Wno-inconsistent-missing-override -Wno-braced-scalar-init)
+    set(_msvc /wd4244 /wd4267 /wd4477)
+    target_compile_options(${target} PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:C,GNU,Clang,AppleClang>:${_common}>"
+        "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:${_common}>"
+        "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:${_common};${_clang_only}>"
+        "$<$<COMPILE_LANG_AND_ID:C,MSVC>:${_msvc}>"
+        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:${_msvc}>"
+    )
+endfunction()
+
+foreach(_vendored libultraship ZAPDLib ZAPD libgfxd OTRExporter prism)
+    ship_quiet_vendored_warnings(${_vendored})
+endforeach()
+
 add_subdirectory(mm)
 
 set_property(TARGET 2ship PROPERTY APPIMAGE_DESKTOP_FILE_TERMINAL YES)
