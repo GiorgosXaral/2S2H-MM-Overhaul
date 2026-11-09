@@ -2027,11 +2027,6 @@ void BenMenu::AddEnhancements() {
             "what to do next, which steps have to be redone after the Song of Time, the day and time of this "
             "cycle, side quests (all 24 masks, Anju & Kafei, Great Fairies, Spider Houses) and your collection. "
             "Milestones still ahead stay veiled unless you choose to see the whole road."));
-    AddWidget(path, "Show the whole road", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.ThreadsOfTime.ShowWholeRoad")
-        .Options(CheckboxOptions()
-                     .Tooltip("Show the real names and directions of every milestone still ahead (spoilers).")
-                     .DefaultValue(false));
 
     // Epona Control Overhaul (port of LT_Schmiddy's mod for Majora's Mask: Recompiled)
     path = { "Enhancements", "Epona", SECTION_COLUMN_1 };

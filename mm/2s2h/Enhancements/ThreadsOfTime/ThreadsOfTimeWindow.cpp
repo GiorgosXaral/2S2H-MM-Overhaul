@@ -344,8 +344,11 @@ void ThreadsOfTimeWindow::DrawElement() {
         ImGui::PopStyleColor();
     }
 
+    // Everything here gets its own ID scope: the menu can draw this window inside itself, next to other widgets
+    ImGui::PushID("ThreadsOfTimeWindow");
+
     bool revealAll = CVarGetInteger(TOT_CVAR_WHOLE_ROAD, 0) != 0;
-    if (ImGui::Checkbox("Show the whole road", &revealAll)) {
+    if (ImGui::Checkbox("Show the whole road##ThreadsOfTime", &revealAll)) {
         CVarSetInteger(TOT_CVAR_WHOLE_ROAD, revealAll ? 1 : 0);
         Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
     }
@@ -359,4 +362,6 @@ void ThreadsOfTimeWindow::DrawElement() {
     DrawTimeline(revealAll);
     DrawSideThreads();
     DrawCollection();
+
+    ImGui::PopID();
 }
