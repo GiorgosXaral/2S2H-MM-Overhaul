@@ -962,8 +962,12 @@ extern "C" void Messagebox_ShowErrorBox(char* title, char* body) {
     Extractor::ShowErrorBox(title, body);
 }
 
+// 2S2H-MM-Overhaul: also re-extract when the minor version changes. Upstream renames assets between minor
+// versions (for example the Freezard display lists in 5.1), and an mm.o2r made by an older build no longer has
+// them, which crashes at startup.
 bool VerifyArchiveVersion(ArchiveVersion version) {
-    return version.major != INT16_MAX && version.major != gBuildVersionMajor;
+    return version.major != INT16_MAX &&
+           (version.major != gBuildVersionMajor || version.minor != gBuildVersionMinor);
 }
 
 extern "C" void InitOTR(int argc, char* argv[]) {
