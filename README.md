@@ -1,6 +1,6 @@
 # 2S2H-MM-Overhaul
 
-A modified version of [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian), the PC port of *The Legend of Zelda: Majora's Mask*, based on [lightmanLP's mouse-support build M3.1.0](https://github.com/lightmanLP/2ship2harkinian/releases/tag/M3.1.0). It adds tougher and smarter bosses, minibosses and enemies, sword projectiles, better Epona controls, a swimming overhaul, secret detection, instant text, and Threads of Time, an in-game guide to your journey.
+A modified version of [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian), the PC port of *The Legend of Zelda: Majora's Mask*, based on [lightmanLP's mouse-support build M3.1.0](https://github.com/lightmanLP/2ship2harkinian/releases/tag/M3.1.0), updated with 2 Ship 2 Harkinian's later changes up to the Beatrice Alfa development version (November 2026). It adds tougher and smarter bosses, minibosses and enemies, sword projectiles, better Epona controls, a swimming overhaul, secret detection, instant text, and Threads of Time, an in-game guide to your journey.
 
 Every change can be switched on or off in the in-game menu (press **F1** for the menu bar). They're **on by default**; turning one off gives you the original behavior back.
 
