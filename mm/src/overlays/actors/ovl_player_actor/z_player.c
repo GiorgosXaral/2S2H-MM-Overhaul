@@ -50,6 +50,7 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/CustomMessage/CustomMessage.h"
 #include "2s2h/Mouse.h"
+#include "2s2h/Enhancements/Masks/MasksAlwaysUseMagic.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 
 void Player_Init(Actor* thisx, PlayState* play);
@@ -3855,6 +3856,13 @@ void Player_ProcessItemButtons(Player* this, PlayState* play) {
         return;
     }
     if (func_801240DC(this)) {
+        return;
+    }
+
+    // 2S2H-MM-Overhaul: with "Masks Always Use Magic", Fierce Deity Link turns back when his magic runs out, as
+    // Giant Link does
+    if (MasksAlwaysUseMagic_FierceDeityOutOfMagic(this) && !Play_InCsMode(play)) {
+        Player_UseItem(play, this, ITEM_MASK_FIERCE_DEITY);
         return;
     }
 

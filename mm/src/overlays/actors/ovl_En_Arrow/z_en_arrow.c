@@ -10,6 +10,7 @@
 #include "objects/gameplay_keep/gameplay_keep.h"
 
 #include "2s2h/framebuffer_effects.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
@@ -194,6 +195,48 @@ void func_8088A514(EnArrow* this) {
     Actor_SetSpeeds(&this->actor, CLAMP(temp_f0, 1.0f, 80.0f));
 }
 
+// 2S2H-MM-Overhaul: Homing Arrows. 0 off, 1 Light Arrows (default), 2 all magic arrows
+static s32 EnArrow_Homes(s16 params) {
+    s32 mode = CVarGetInteger("gEnhancements.Equipment.HomingArrows", 1);
+
+    if (mode == 1) {
+        return params == ARROW_TYPE_LIGHT;
+    }
+    if (mode == 2) {
+        return ARROW_IS_MAGICAL(params);
+    }
+    return false;
+}
+
+// Steers a homing arrow straight at its target's centre every frame, so it always arrives unless a wall is in the way.
+static void EnArrow_Home(EnArrow* this) {
+    Actor* target = this->homingTarget;
+    Vec3f to;
+    f32 dist;
+    f32 step;
+
+    if ((target == NULL) || (target->update == NULL)) {
+        this->homingTarget = NULL;
+        return;
+    }
+
+    to.x = target->focus.pos.x - this->actor.world.pos.x;
+    to.y = target->focus.pos.y - this->actor.world.pos.y;
+    to.z = target->focus.pos.z - this->actor.world.pos.z;
+    dist = sqrtf(SQ(to.x) + SQ(to.y) + SQ(to.z));
+    if (dist < 1.0f) {
+        return;
+    }
+    // Never overshoots: the last step lands on the target
+    step = (dist < 150.0f) ? (dist + 10.0f) : 150.0f;
+
+    this->actor.gravity = 0.0f;
+    this->actor.world.rot.y = Math_Atan2S(to.z, to.x);
+    this->actor.shape.rot.y = this->actor.world.rot.y;
+    this->actor.speed = step * (sqrtf(SQ(to.x) + SQ(to.z)) / dist);
+    this->actor.velocity.y = step * (to.y / dist);
+}
+
 void func_8088A594(EnArrow* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
 
@@ -265,6 +308,15 @@ void func_8088A594(EnArrow* this, PlayState* play) {
         } else {
             Actor_SetSpeeds(&this->actor, 150.0f);
             this->unk_260 = 16;
+
+            // Homing Arrows: remember who Link is locked onto
+            this->homingTarget = NULL;
+            if (EnArrow_Homes(this->actor.params) && (player->focusActor != NULL) &&
+                (player->focusActor != &player->actor) && (player->focusActor->update != NULL) &&
+                (player->stateFlags1 & PLAYER_STATE1_Z_TARGETING)) {
+                this->homingTarget = player->focusActor;
+                this->unk_260 = 40;
+            }
         }
     }
 }
@@ -499,11 +551,15 @@ void func_8088ACE0(EnArrow* this, PlayState* play) {
                 func_8088A514(this);
             }
             Actor_PlaySfx_Flagged(&this->actor, NA_SE_IT_DEKUNUTS_BUBLE_SHOT_LEVEL - SFX_FLAG);
-        } else if (this->unk_260 < 7) {
+        } else if ((this->unk_260 < 7) && (this->homingTarget == NULL)) {
             this->actor.gravity = -0.4f;
         }
 
         Math_Vec3f_Copy(&this->unk_228, &this->actor.world.pos);
+
+        if ((this->homingTarget != NULL) && (this->actor.speed != 0.0f)) {
+            EnArrow_Home(this);
+        }
 
         if (this->actor.speed == 0.0f) {
             this->actor.velocity.y -= 1.0f;

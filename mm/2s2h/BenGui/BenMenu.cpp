@@ -222,6 +222,12 @@ static const std::unordered_map<int32_t, const char*> eponaControlModeOptions = 
     { 2, "Hybrid" },
 };
 
+static const std::unordered_map<int32_t, const char*> homingArrowOptions = {
+    { 0, "Off" },
+    { 1, "Light Arrows only" },
+    { 2, "All magic arrows" },
+};
+
 static const std::unordered_map<int32_t, const char*> secretClueStrengthOptions = {
     { 0, "Subtle" },
     { 1, "Obvious" },
@@ -1161,6 +1167,14 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Equipment.ItemUnequip")
         .Options(CheckboxOptions().Tooltip("In the pause menu, press the same C-button or D-pad button an item is "
                                            "equipped to in order to unequip it."));
+    AddWidget(path, "Homing Arrows", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.Equipment.HomingArrows")
+        .Options(ComboboxOptions()
+                     .ComboMap(&homingArrowOptions)
+                     .DefaultIndex(1)
+                     .Tooltip("Arrows fired while you're Z-targeting an enemy fly straight at it, following it as it "
+                              "moves, so they always hit unless a wall is in the way. Without a lock-on they fly "
+                              "normally."));
     AddWidget(path, "Fast Magic Arrow Equip Animation", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Equipment.MagicArrowEquipSpeed")
         .Options(CheckboxOptions().Tooltip("Removes the animation for equipping Magic Arrows."));
@@ -1573,6 +1587,12 @@ void BenMenu::AddEnhancements() {
                      .Max(15.5f)
                      .Format("%.1f seconds")
                      .DefaultValue(15.5f));
+    AddWidget(path, "Masks Always Use Magic", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Masks.AlwaysUseMagic")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "The Giant's Mask and the Fierce Deity's Mask drain magic while worn (the Fierce Deity at the Giant's "
+            "Mask's rate), even with the Infinite Magic cheat on or after drinking Chateau Romani. When the magic "
+            "runs out, Link turns back."));
     AddWidget(path, "Goron Rolling Ignores Magic", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Masks.GoronRollingIgnoresMagic")
         .Options(CheckboxOptions().Tooltip(

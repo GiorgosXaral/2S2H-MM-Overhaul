@@ -128,6 +128,16 @@ Undiscovered secrets near Link give off sparkles, and the colour tells you what 
 - **Require Lens of Truth**: clues only appear once you own the Lens of Truth (off by default).
 - Each clue type has its own switch.
 
+### Homing Arrows
+*Enhancements → Items → Homing Arrows* (default: Light Arrows only)
+
+Fire an arrow while you're Z-targeting an enemy and it flies straight at it, following it as it moves, so it always hits unless a wall is in the way. Without a lock-on, arrows fly normally. Choose **Light Arrows only**, **All magic arrows** (Fire, Ice and Light), or **Off**.
+
+### Masks Always Use Magic
+*Enhancements → Masks → Masks Always Use Magic* (on by default)
+
+The Giant's Mask and the Fierce Deity's Mask drain magic while worn (the Fierce Deity at the Giant's Mask's rate), even with the **Infinite Magic** cheat on or after drinking Chateau Romani. When the magic runs out, Link turns back. Bring a magic potion to the Majora fight.
+
 ### Instant Text
 *Enhancements → Time Savers → Instant Text*
 

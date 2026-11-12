@@ -1,6 +1,7 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
+#include "2s2h/Enhancements/Masks/MasksAlwaysUseMagic.h"
 
 extern "C" {
 #include "variables.h"
@@ -17,6 +18,10 @@ static RegisterShipInitFunc healthInitFunc(
 static RegisterShipInitFunc magicInitFunc(
     []() {
         COND_HOOK(OnGameStateUpdate, CVarGetInteger("gCheats.InfiniteMagic", 0), []() {
+            // 2S2H-MM-Overhaul: the Giant's and Fierce Deity's Masks still use magic while worn
+            if (MasksAlwaysUseMagic_Active()) {
+                return;
+            }
             uint8_t magicLevel = gSaveContext.save.saveInfo.playerData.magicLevel;
             if (magicLevel == 1) {
                 gSaveContext.save.saveInfo.playerData.magic = MAGIC_NORMAL_METER;

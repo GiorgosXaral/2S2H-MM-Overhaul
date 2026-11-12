@@ -64,6 +64,7 @@ typedef struct EnArrow {
     /* 0x264 */ Actor* unk_264;
     /* 0x268 */ Vec3f unk_268;
     /* 0x274 */ EnArrowActionFunc actionFunc;
-} EnArrow; // size = 0x278
+    Actor* homingTarget; // 2S2H-MM-Overhaul: Homing Arrows (the enemy Link was locked onto when he fired)
+} EnArrow; // size = 0x278 (vanilla)
 
 #endif // Z_EN_ARROW_H
